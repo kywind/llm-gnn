@@ -1,0 +1,32 @@
+[
+   {
+        "name": "get_current_detection",
+        "description": "Get the current detection results of the tabletop objects",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "camera_id": {
+                    "type": "string",
+                    "description": "The camera_id, default: right_hand_camera"
+                },
+                "unit": {"type": "string"}
+            },
+            "required": ["camera_id"]
+        }
+    },
+    {
+        "name": "get_current_task",
+        "description": "Get the current task description",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "The object category"
+                },
+                "unit": {"type": "string"}
+            },
+            "required": ["category"]
+        }
+    }
+]
