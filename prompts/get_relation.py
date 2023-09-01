@@ -4,7 +4,7 @@ from graph.base import Graph, Particle, Relation
 from graph.granular import gen_granular_particle
 from perception import get_observation
 
-# Query: Construct graph relations using nearest neighbors search bounded by a threshold, and use particle attributes and their relative positions as relation attributes.
+# Query: Construct graph particles using downsampling, and use graph density and action info as particle attributes.
 # Code:
 observation = perception.get_observation()
 gen_granular_particle(observation, downsample=True, use_density=True, use_action=True)

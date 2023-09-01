@@ -3,7 +3,7 @@ from graph.utils import depth2fgpcd, downsample_pcd, fps, recenter
 from graph.base import Particle
 
 
-def gen_particle(obs):
+def gen_granular_particle(obs, downsample=True, use_density=True, use_action=True):
     """Generate a particle."""
     def obs2ptcl_fixed_num_batch(self, obs, particle_num, batch_size):
         assert type(obs) == np.ndarray
@@ -36,3 +36,6 @@ def gen_particle(obs):
         density = particle_den
     )
     return particle
+
+def gen_granular_relations():
+    pass

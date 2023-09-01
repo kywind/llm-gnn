@@ -1,5 +1,3 @@
-import numpy as np
-from perception import parse_query_obj
 import lmp
 
 

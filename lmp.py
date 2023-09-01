@@ -25,7 +25,19 @@ def planner(args, detection_results, out_file):
 
 def get_graph(instruction):
     out_file = sys.argv[1]
+    model = sys.argv[2]
+    openai.api_key = sys.argv[3]
     response_text = '# get_relation called with instruction: ' + instruction
+
+    # with open('prompts/get_graph.py', 'r') as f:
+    #     prompts = f.read()
+    # prompts_all = prompts.replace('[[ instruction ]]', instruction)
+    # # print(prompts_all)
+    # message = [{"role": "user", "content": prompts_all}]
+    # response = openai.ChatCompletion.create(
+    #     model=model,
+    #     messages=message,
+    # )
 
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')
@@ -35,8 +47,21 @@ def get_graph(instruction):
 
 def get_particle(instruction):
     out_file = sys.argv[1]
-    response_text = '# get_particle called with instruction: ' + instruction
-    
+    model = sys.argv[2]
+    openai.api_key = sys.argv[3]
+    # response_text = '# get_particle called with instruction: ' + instruction
+
+    with open('prompts/get_particle.py', 'r') as f:
+        prompts = f.read()
+    prompts_all = prompts.replace('[[ instruction ]]', instruction)
+    # print(prompts_all)
+    message = [{"role": "user", "content": prompts_all}]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=message,
+    )
+    response_text = response['choices'][0]['message']['content']
+
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')
         f.write(response_text)
@@ -45,7 +70,20 @@ def get_particle(instruction):
 
 def get_relation(instruction):
     out_file = sys.argv[1]
+    model = sys.argv[2]
+    openai.api_key = sys.argv[3]
     response_text = '# get_relation called with instruction: ' + instruction
+
+    # with open('prompts/get_relation.py', 'r') as f:
+    #     prompts = f.read()
+    # prompts_all = prompts.replace('[[ instruction ]]', instruction)
+    # # print(prompts_all)
+    # message = [{"role": "user", "content": prompts_all}]
+    # response = openai.ChatCompletion.create(
+    #     model=model,
+    #     messages=message,
+    # )
+    # response_text = response['choices'][0]['message']['content']
 
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')
