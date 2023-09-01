@@ -1,3 +1,4 @@
 __pycache__
 unused/
 files/api_key.txt
+lmp_output/*.py
