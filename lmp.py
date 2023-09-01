@@ -25,12 +25,7 @@ def planner(args, detection_results, out_file):
 
 def get_graph(instruction):
     out_file = sys.argv[1]
-    response_text = 'get_graph end'
-
-    if not os.path.exists(out_file):
-        output_text = 'import lmp\n\n' + response_text + '\n\n'
-    else:
-        output_text = response_text + '\n\n'
+    response_text = '# get_relation called with instruction: ' + instruction
 
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')
@@ -40,7 +35,7 @@ def get_graph(instruction):
 
 def get_particle(instruction):
     out_file = sys.argv[1]
-    response_text = 'get_graph end'
+    response_text = '# get_particle called with instruction: ' + instruction
     
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')
@@ -50,12 +45,7 @@ def get_particle(instruction):
 
 def get_relation(instruction):
     out_file = sys.argv[1]
-    response_text = 'get_graph end'
-    
-    if not os.path.exists(out_file):
-        output_text = 'import lmp\n\n' + response_text + '\n\n'
-    else:
-        output_text = response_text + '\n\n'
+    response_text = '# get_relation called with instruction: ' + instruction
 
     with open(out_file, 'a') as f:
         f.write('import lmp\n\n')

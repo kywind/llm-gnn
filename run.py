@@ -15,10 +15,16 @@ detection_results = "The object is a pile of beans."
 idx = 0
 lmp.planner(args, detection_results, out_file=f'lmp_output/{idx}.py')
 
+final_lmp = None
 for _ in range(100):
     with open(f'lmp_output/{idx}.py', 'r') as f:
         next_lmp = f.read()
-    if not next_lmp.find('\nlmp.'):
+    import ipdb; ipdb.set_trace()
+    if next_lmp.find('\nlmp.') == -1:
+        # LM planning finished
+        final_lmp = next_lmp
         break
     os.system(f"python lmp_output/{idx}.py lmp_output/{idx+1}.py")
     idx += 1
+
+# TODO use final_lmp for execution
