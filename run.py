@@ -12,7 +12,7 @@ with open(args.api_key, 'r') as f:
     api_key = f.read().strip()
 openai.api_key = api_key
 
-detection_results = "The object is a pile of beans."
+detection_results = "The object is a piece of dough."
 idx = 0
 lmp.planner(args, detection_results, out_file=f'lmp_output/{idx}.py')
 

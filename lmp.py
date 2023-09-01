@@ -18,7 +18,7 @@ def planner(args, detection_results, out_file):
     # print('\n\n')
     # print(planner_response_text)
     with open(out_file, 'a') as f:
-        f.write('import lmp\n\n')
+        f.write('import os, sys\nsys.path.append(os.getcwd())\nimport lmp\n\n')
         f.write(planner_response_text)
         f.write('\n\n')
 
@@ -39,8 +39,10 @@ def get_graph(instruction):
     #     messages=message,
     # )
 
+    new_file = not os.path.exists(out_file)
     with open(out_file, 'a') as f:
-        f.write('import lmp\n\n')
+        if new_file:
+            f.write('import os, sys\nsys.path.append(os.getcwd())\nimport lmp\n\n')
         f.write(response_text)
         f.write('\n\n')
 
@@ -62,8 +64,10 @@ def get_particle(instruction):
     )
     response_text = response['choices'][0]['message']['content']
 
+    new_file = not os.path.exists(out_file)
     with open(out_file, 'a') as f:
-        f.write('import lmp\n\n')
+        if new_file:
+            f.write('import os, sys\nsys.path.append(os.getcwd())\nimport lmp\n\n')
         f.write(response_text)
         f.write('\n\n')
 
@@ -84,8 +88,10 @@ def get_relation(instruction):
     #     messages=message,
     # )
     # response_text = response['choices'][0]['message']['content']
-
+    
+    new_file = not os.path.exists(out_file)
     with open(out_file, 'a') as f:
-        f.write('import lmp\n\n')
+        if new_file:
+            f.write('import os, sys\nsys.path.append(os.getcwd())\nimport lmp\n\n')
         f.write(response_text)
         f.write('\n\n')
