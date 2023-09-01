@@ -27,7 +27,7 @@ def get_graph(instruction):
     out_file = sys.argv[1]
     model = sys.argv[2]
     openai.api_key = sys.argv[3]
-    response_text = '# get_relation called with instruction: ' + instruction
+    response_text = '# get_graph called with instruction: ' + instruction
 
     # with open('prompts/get_graph.py', 'r') as f:
     #     prompts = f.read()
