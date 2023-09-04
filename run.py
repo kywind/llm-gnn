@@ -1,30 +1,46 @@
 import os
 import openai
 
-import lmp
-from argp import get_args
+from lmp.planner import planner
+from config import gen_args
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.system('rm lmp_output/*.py')
 
-args = get_args()
+
+def initial_perception_function():
+    return "The object is a piece of dough."
+
+args = gen_args()
 with open(args.api_key, 'r') as f:
     api_key = f.read().strip()
 openai.api_key = api_key
 
-detection_results = "The object is a piece of dough."
-idx = 0
-lmp.planner(args, detection_results, out_file=f'lmp_output/{idx}.py')
+'''
+step 0: generate initial perception that describes the overall scene
+'''
+detection_results = initial_perception_function()
 
-final_lmp = None
-for _ in range(100):
-    with open(f'lmp_output/{idx}.py', 'r') as f:
-        next_lmp = f.read()
-    if next_lmp.find('\nlmp.') == -1:
-        # LM planning finished
-        final_lmp = next_lmp
-        break
-    os.system(f"python lmp_output/{idx}.py lmp_output/{idx+1}.py {args.model} {api_key}")
-    idx += 1
+'''
+step 1: generate planner output
+'''
+planner(args, detection_results, out_file='lmp_output/planner.py')
 
-# TODO use final_lmp for execution
+'''
+step 2: generate gen_gnn output
+'''
+out_file = f'lmp_output/gen_gnn.py'
+os.system(f"python lmp_output/planner.py lmp_output/gen_gnn.py {args.llm} {api_key}")
+
+'''
+final step: run executable
+'''
+def run_gnn(*args):  # TODO
+    pass
+
+run_gnn(
+    # 'lmp_output/gen_gnn.py',
+    'lmp_output/eval.py',
+    'lmp_output/model.py',
+    'gnn/utils.py',
+)

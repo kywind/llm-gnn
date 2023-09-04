@@ -1,4 +1,4 @@
-import lmp
+from lmp.gen_gnn import gen_gnn
 
 
 # Query: The object is a pile of coffee beans.
@@ -12,9 +12,12 @@ import lmp
 # We need to use particle attributes and their relative positions as the relation attributes.
 # 3. Finally, we can construct a graph of middle size since the object contains many particles.
 # Code:
-lmp.get_particle("Construct graph particles using downsampling, and use graph density and action info as particle attributes.")
-lmp.get_relation("Construct graph relations using nearest neighbors search bounded by a threshold, and use particle attributes and their relative positions as relation attributes.")
-lmp.get_graph("Construct a propagation network of middle size, with one final predictor network outputting particle xyz.")
+info = []
+info.append("The object is a pile of coffee beans.")
+info.append("Construct graph particles using downsampling, and use graph density and action info as particle attributes.")
+info.append("Construct graph relations using nearest neighbors search bounded by a threshold, and use particle attributes and their relative positions as relation attributes.")
+info.append("Construct a propagation network of middle size, with one final predictor network outputting particle xyz.")
+gen_gnn(info)
 
 # Query: The object is an apple.
 # Reasoning: (write in comments)
@@ -27,9 +30,12 @@ lmp.get_graph("Construct a propagation network of middle size, with one final pr
 # We need to use particle attributes and their relative positions as the relation attributes.
 # 3. Finally, we can construct a graph of small size since the object motion is simple.
 # Code:
-lmp.get_particle("Construct graph particles without downsampling, and use object pose as particle attributes.")
-lmp.get_relation("Construct graph relations using nearest neighbors search bounded by a threshold, and use particle attributes and their relative positions as relation attributes.")
-lmp.get_graph("Construct a propagation network of small size, with one final predictor network outputting particle xyz.")
+info = []
+info.append("The object is an apple.")
+info.append("Construct graph particles without downsampling, and use object pose as particle attributes.")
+info.append("Construct graph relations using nearest neighbors search bounded by a threshold, and use particle attributes and their relative positions as relation attributes.")
+info.append("Construct a propagation network of small size, with one final predictor network outputting particle xyz.")
+gen_gnn(info)
 
 # Query: [[ detection_results ]]
 # Reasoning: (write in comments)

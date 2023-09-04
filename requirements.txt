@@ -4,3 +4,9 @@ numpy
 torch
 torchvision
 torchaudio
+scipy
+opencv-python
+matplotlib
+h5py
+open3d
+scikit-learn
