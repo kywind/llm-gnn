@@ -16,7 +16,7 @@ def perception_function(args):  # TODO for LLM and VLM
     n_shape = 0
     p_sample = []
     scene_params = []
-    ### LLM START ### set perception function
+    ### LLM START ### set_perception_function
     ### LLM END ###
     return n_particle, n_shape, p_sample, scene_params
 
@@ -60,7 +60,7 @@ def load_data_samples(args):  # TODO
 
 def evaluate(args, inputs):
 
-    ### LLM START ### set initial args
+    ### LLM START ### set_initial_args
     ### LLM END ###
 
     set_seed(args.random_seed)
@@ -84,7 +84,7 @@ def evaluate(args, inputs):
 
     elif args.material == 'open-vocab':
         model_loss = []
-        ### LLM START ### set loss
+        ### LLM START ### set_loss
         ### LLM END ###
 
     if args.material == 'granular':
@@ -119,7 +119,7 @@ def evaluate(args, inputs):
         args.attr_dim = None
         args.n_his = None
         args.state_dim = None
-        ### LLM START ### set arg dimensions
+        ### LLM START ### set_arg_dimensions
         ### LLM END ###
     
     else:
@@ -176,7 +176,7 @@ def evaluate(args, inputs):
                     n_particle_sp = None
                     p_rigid_sp = None
                     p_instance_sp = None
-                    ### LLM START ### set subsampling
+                    ### LLM START ### set_subsampling
                     ### LLM END ###
                 else:
                     state_cur_sp = state_cur
