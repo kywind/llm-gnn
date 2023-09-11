@@ -10,15 +10,9 @@ from utils import load_data, get_env_group, get_scene_info, prepare_input
 from utils import subsample_ptcl, downsample_pcd, fps, recenter, depth2fgpcd
 # from visualize import train_plot_curves, eval_plot_curves, eval_plot_curves, plt_render
 
+from data.scene_state import SceneState
+from data.point_cloud import PointCloud
 
-def perception_function(args):  # TODO for LLM and VLM
-    n_particle = 0
-    n_shape = 0
-    p_sample = []
-    scene_params = []
-    ### LLM START ### set_perception_function
-    ### LLM END ###
-    return n_particle, n_shape, p_sample, scene_params
 
 def load_action_seq(args):  # TODO
     action_cur = np.load(os.path.join(args.dataf, 'action_seq.npy'))
@@ -59,6 +53,9 @@ def load_data_samples(args):  # TODO
 
 
 def evaluate(args, inputs):
+
+    scene = SceneState(args)
+    scene.init_perception()
 
     ### LLM START ### set_initial_args
     ### LLM END ###
@@ -129,15 +126,16 @@ def evaluate(args, inputs):
     for _ in range(args.n_rollout):
         loss_list = []
 
-        n_instance, n_particle, n_shape, scene_params = perception_function(args)  # TODO left for LLM and VLM
-        args.n_instance = n_instance
+        # n_instance, n_particle, n_shape, scene_params = p_env.perception_function(args)  # TODO left for LLM and VLM
+        scene.step_perception()
+        args.n_instance = scene.n_instance
 
         # initialize particle grouping
-        p_rigid, p_instance, physics_param = get_env_group(args, n_particle, scene_params)
+        # p_rigid, p_instance, physics_param = get_env_group(args, n_particle, scene_params)
 
         # memory: B x mem_nlayer x (n_particle + n_shape) x nf_memory
         # for now, only used as a placeholder
-        memory_init = model.init_memory(1, n_particle + n_shape)
+        # memory_init = model.init_memory(1, n_particle + n_shape)
 
         # model rollout
         st_idx = args.n_his
@@ -167,22 +165,20 @@ def evaluate(args, inputs):
 
                 if args.material == 'granular':
                     n_sample = 30
-                    state_cur_sp, particle_r, p_rigid_sp, p_instance_sp = subsample_ptcl(
-                            state_cur, n_particle, p_rigid, p_instance, n_sample=n_sample)
-                    particle_den = np.array([1 / (particle_r * particle_r)])[0]
-                    n_particle_sp = state_cur_sp.shape
+                    # state_cur_sp, particle_r, p_rigid_sp, p_instance_sp = subsample_ptcl(
+                    #         state_cur, n_particle, p_rigid, p_instance, n_sample=n_sample)
+                    scene.subsample(n_sample)
+                    
+                    # n_particle_sp = state_cur_sp.shape
                 elif args.material == 'open-vocab':
-                    state_cur_sp = None
-                    n_particle_sp = None
-                    p_rigid_sp = None
-                    p_instance_sp = None
+                    pass
                     ### LLM START ### set_subsampling
                     ### LLM END ###
-                else:
-                    state_cur_sp = state_cur
-                    n_particle_sp = n_particle
-                    p_rigid_sp = p_rigid
-                    p_instance_sp = p_instance
+                # else:
+                #     state_cur_sp = state_cur
+                #     n_particle_sp = n_particle
+                #     p_rigid_sp = p_rigid
+                #     p_instance_sp = p_instance
 
                 # unsqueeze the batch dimension
                 # attr: B x (n_p + n_s) x attr_dim

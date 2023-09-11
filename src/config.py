@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser()
 LLM config
 '''
 parser.add_argument('--llm', type=str, default='gpt-3.5-turbo-0613')
-parser.add_argument('--api-key', type=str, default='files/api_key.txt')
+parser.add_argument('--api-key', type=str, default='../api_key.txt')
 
 '''
 system and run config
@@ -38,7 +38,9 @@ task-specific parameters for LLM
 '''
 parser.add_argument('--material', type=str, default='deformable', 
         choices=['rigid', 'multi-rigid' 'deformable', 'granular', 'rope', 'cloth', 'mixed', 'open-vocab'])
-parser.add_argument('--n_instance', type=int, default=1)
+parser.add_argument('--action', type=str, default='push', 
+        choices=['push', 'grasp', 'press', 'roll', 'open-vocab'])
+# parser.add_argument('--n_instance', type=int, default=1)  # auto select
 
 parser.add_argument('--attr_dim', type=int, default=3)
 parser.add_argument('--state_dim', type=int, default=3)
@@ -56,7 +58,7 @@ parser.add_argument('--load_action', type=int, default=0)
 parser.add_argument('--load_gt', type=int, default=0)
 
 # use a flexible number of frames for each training iteration
-parser.add_argument('--n_his', type=int, default=4)
+parser.add_argument('--n_his', type=int, default=1)
 parser.add_argument('--sequence_length', type=int, default=6)
 
 '''
@@ -95,7 +97,7 @@ parser.add_argument('--emd_weight', type=float, default=0.9)
 parser.add_argument('--chamfer_weight', type=float, default=0.1)
 parser.add_argument('--p_rigid', type=float, default=1.0)
 
-parser.add_argument('--n_rollout', type=int, default=0)
+parser.add_argument('--n_rollout', type=int, default=5)
 parser.add_argument('--train_valid_ratio', type=float, default=0.9)
 parser.add_argument('--num_workers', type=int, default=4)
 parser.add_argument('--log_per_iter', type=int, default=100)

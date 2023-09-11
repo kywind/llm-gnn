@@ -1,4 +1,4 @@
 __pycache__
+api_key.txt
 unused/
-files/api_key.txt
-lmp_output/*.py
+lmp_output/

@@ -5,7 +5,9 @@ from lmp.planner import planner
 from config import gen_args
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-os.system('rm lmp_output/*.py')
+
+os.makedirs('lmp_output', exist_ok=True)
+os.system('rm lmp_output/*')
 
 
 def initial_perception_function():
