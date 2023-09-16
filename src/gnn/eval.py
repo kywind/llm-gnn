@@ -55,7 +55,9 @@ def load_data_samples(args):  # TODO
 def evaluate(args, inputs):
 
     scene = SceneState(args)
-    scene.init_perception()
+    scene.init_perception(
+        image="/home/zhangkaifeng/projects/dyn-res-pile-manip/data/gnn_dyn_data", 
+    )
 
     ### LLM START ### set_initial_args
     ### LLM END ###
@@ -129,13 +131,17 @@ def evaluate(args, inputs):
         # n_instance, n_particle, n_shape, scene_params = p_env.perception_function(args)  # TODO left for LLM and VLM
         scene.step_perception()
         args.n_instance = scene.n_instance
+        n_instance = scene.n_instance
+        n_particle = scene.n_particle
+        n_shape = scene.n_shape
+        scene_params = scene.scene_params
 
         # initialize particle grouping
-        # p_rigid, p_instance, physics_param = get_env_group(args, n_particle, scene_params)
+        p_rigid, p_instance, physics_param = get_env_group(args, n_particle, scene_params)
 
         # memory: B x mem_nlayer x (n_particle + n_shape) x nf_memory
         # for now, only used as a placeholder
-        # memory_init = model.init_memory(1, n_particle + n_shape)
+        memory_init = model.init_memory(1, n_particle + n_shape)
 
         # model rollout
         st_idx = args.n_his
@@ -163,13 +169,14 @@ def evaluate(args, inputs):
                     action_cur = action_seq[step_id - args.n_his:step_id]
                     action_cur = action_cur.to(device)
 
+                n_sample = 30
                 if args.material == 'granular':
-                    n_sample = 30
-                    # state_cur_sp, particle_r, p_rigid_sp, p_instance_sp = subsample_ptcl(
-                    #         state_cur, n_particle, p_rigid, p_instance, n_sample=n_sample)
-                    scene.subsample(n_sample)
+                    state_cur_sp, particle_r, p_rigid_sp, p_instance_sp = subsample_ptcl(
+                            state_cur, n_particle, p_rigid, p_instance, n_sample=n_sample)
+                    particle_den = np.array([1 / (particle_r * particle_r)])[0]
+                    n_particle_sp = state_cur_sp.shape
+                    # scene.subsample(n_sample)
                     
-                    # n_particle_sp = state_cur_sp.shape
                 elif args.material == 'open-vocab':
                     pass
                     ### LLM START ### set_subsampling
@@ -208,6 +215,11 @@ def evaluate(args, inputs):
                     physics_param,
                     particle_den,
                 ]
+
+                # visualize input
+                import ipdb; ipdb.set_trace()
+
+                continue
 
                 # pred_pos (unnormalized): B x n_p x state_dim
                 # pred_motion_norm (normalized): B x n_p x state_dim

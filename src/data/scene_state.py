@@ -19,7 +19,7 @@ class SceneState:
     def step_perception(self):
         n_instance, n_particle, n_shape, scene_params = 0, 0, 0, None
 
-    def init_perception(self):
+    def init_perception(self, image, depth, seg, scene_params):
         pass
     
     def subsample(self, n):
