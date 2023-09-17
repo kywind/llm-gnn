@@ -16,10 +16,33 @@ import matplotlib.transforms as transforms
 import torch
 from torch.autograd import Variable
 
+import scipy
 from dgl.geometry import farthest_point_sampler
 import open3d as o3d
 
 from PIL import Image, ImageEnhance
+
+
+def find_relations_neighbor(pos, query_idx, anchor_idx, radius, order, var=False):
+    if np.sum(anchor_idx) == 0:
+        return []
+
+    point_tree = scipy.spatial.cKDTree(pos[anchor_idx])
+    neighbors = point_tree.query_ball_point(pos[query_idx], radius, p=order)
+
+    relations = []
+    for i in range(len(neighbors)):
+        count_neighbors = len(neighbors[i])
+        if count_neighbors == 0:
+            continue
+
+        receiver = np.ones(count_neighbors, dtype=np.int) * query_idx[i]
+        sender = np.array(anchor_idx[neighbors[i]])
+
+        # receiver, sender, relation_type
+        relations.append(np.stack([receiver, sender], axis=1))
+    return relations
+
 
 def rect_from_coord(uxi, uyi, uxf, uyf, bar_width):
     # transform into angular coordinates

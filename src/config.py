@@ -37,14 +37,15 @@ parser.add_argument('--vis_height', type=int, default=120)
 task-specific parameters for LLM
 '''
 parser.add_argument('--material', type=str, default='deformable', 
-        choices=['rigid', 'multi-rigid' 'deformable', 'granular', 'rope', 'cloth', 'mixed', 'open-vocab'])
+        choices=['rigid', 'multi-rigid' 'deformable', 'granular', 'rope', 'cloth', 'mixed', 'other'])
 parser.add_argument('--action', type=str, default='push', 
-        choices=['push', 'grasp', 'press', 'roll', 'open-vocab'])
+        choices=['push', 'grasp', 'press', 'roll', 'other'])
 # parser.add_argument('--n_instance', type=int, default=1)  # auto select
 
 parser.add_argument('--attr_dim', type=int, default=3)
 parser.add_argument('--state_dim', type=int, default=3)
 parser.add_argument('--relation_dim', type=int, default=0)
+parser.add_argument('--action_dim', type=int, default=3)
 
 parser.add_argument('--nf_relation', type=int, default=150)
 parser.add_argument('--nf_particle', type=int, default=150)
