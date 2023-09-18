@@ -15,3 +15,8 @@ pybullet
 bs4
 transformations
 transformers
+accelerate
+bitsandbytes
+omegaconf
+git+https://github.com/salesforce/LAVIS.git
+git+https://github.com/facebookresearch/segment-anything.git

@@ -1,5 +1,7 @@
 __pycache__
 api_key.txt
-unused/
+unused*/
 lmp_output/
 vis/
+MiDaS/
+weights/

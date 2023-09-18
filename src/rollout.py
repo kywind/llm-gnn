@@ -4,11 +4,13 @@ import os
 import torch
 
 from config import gen_args
-from model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
-from utils import set_seed, Tee, count_parameters
-from utils import load_data, get_env_group, get_scene_info, prepare_input
+from gnn.model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
+from gnn.utils import set_seed, Tee, count_parameters
+from gnn.utils import load_data, get_env_group, get_scene_info, prepare_input
 
+from data.dataparser import Dataparser
 from data.particle_dataparser import ParticleDataparser
+from llm.llm import LLM
 import pyflex
 import pickle
 
@@ -16,14 +18,74 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import matplotlib
 
-def rollout(args):
-    args.material = 'granular'
-    ### LLM START ### set_initial_args
-    ### LLM END ###
+import cv2
 
+
+def rollout(args):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
+
+    # img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
+    # init_img_dir = "vis/g1.png"
+    # depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/granular-dynres-0/"
+
+    # img_dir = "vis/inputs/apples_640.png"
+    # init_img_dir = img_dir
+    # depth_dir = "vis/inputs_depth/apples_640-dpt_beit_large_512.png"
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/apples_640-0/"
+
+    img_dir = "vis/inputs/dough_640.png"
+    init_img_dir = img_dir
+    depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png"
+    action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    vis_dir = "vis/dough_640-0/"
+
+    os.makedirs(vis_dir, exist_ok=True)
+
+    # initial dataparser
+    init_parser = Dataparser(args, init_img_dir, detection=True, query=True)
+
+    llm = LLM(args)
+
+    query_results = init_parser.query(
+        texts='What are the objects in the image? Answer:'
+    )
+    print(query_results)
+    material_prompt = " ".join([
+        "You are an agent in a robotic simulation environment." ,
+        "You are asked to classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
+        "You should respond with one of the following: 'rigid', 'granular', 'deformable', 'rope'.",
+        "Respond unknown if you are not sure.\n\n"
+        "Query: coffee beans. Answer: granular.\n\n",
+        "Query: a rope. Answer: rope.\n\n",
+        "Query: a wooden block. Answer: rigid.\n\n",
+        "Query: bananas. Answer: rigid.\n\n",
+        "Query: play-doh. Answer: deformable.\n\n",
+        "Query: a pile of sand. Answer: granular.\n\n",
+        "Query: bottle. Answer: rigid.\n\n",
+        "Query: clothes. Answer: deformable.\n\n",
+        "Query: laptop. Answer: rigid.\n\n",
+        "Query: " + query_results + ". Answer:",
+    ])
+    args.material = llm.query(material_prompt)
+    print(args.material)
+
+    segmentation_results = init_parser.segment(
+        texts='|'.join([query_results, args.material])
+    )
+    # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
+    import ipdb; ipdb.set_trace()
+
+    if not args.material == 'granular' and not args.material == 'deformable':
+        print('Not granular nor deformable, exiting...')
+        return
+
+    ### LLM START ### set_initial_args
+    ### LLM END ###
 
     # set gnn model
     model = Model(args)
@@ -114,12 +176,11 @@ def rollout(args):
         cam = [cam_params, cam_extrinsics]
         data = ParticleDataparser(
             args=args,
-            img_dir="/home/zhangkaifeng/projects/dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png",
-            depth_dir="/home/zhangkaifeng/projects/dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png",
+            img_dir=img_dir,
+            depth_dir=depth_dir,
             cam=cam
         )
-        action_path="/home/zhangkaifeng/projects/dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-        with open(action_path, 'rb') as fp:
+        with open(action_dir, 'rb') as fp:
             actions = pickle.load(fp)
     else:
         raise NotImplementedError
@@ -190,13 +251,57 @@ def rollout(args):
                 # state_cur = torch.cat([state_cur[:, 1:], pred_pos.unsqueeze(1)], 1)
                 # state_cur = state_cur.detach()[0]
 
-                # record the prediction
+                # get next state (same format as input state)
                 next_state = pred_pos[0].detach().cpu().numpy()
+
+                # visualize the particles on the image
+                draw_particles(data, next_state, os.path.join(vis_dir, 'test_{}.png'.format(step_id)))
+ 
+                # record the prediction
                 data.update(next_state)
 
-        # visualization
-        particles_set = [np.stack(data.history_states + [next_state], axis=0)]
-        plt_render(particles_set, particle_num, 'vid_test_plt.gif')
+        # visualize the movements of particles in a video
+        # particles_set = [np.stack(data.history_states + [next_state], axis=0)]
+        # plt_render(particles_set, particle_num, 'vis/vid_test_plt_2.gif')
+
+
+def draw_particles(data, next_state, save_path):
+    state = data.state
+    particle_num = state.shape[0]
+    attrs = data.attrs
+    Rr = data.Rr
+    Rs = data.Rs
+    action = data.action
+    cam_params = data.cam_params
+    cam_extrinsics = data.cam_extrinsics
+
+    # PIL to cv2
+    img = np.array(data.image)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    img_orig = img.copy()
+
+    def pts_to_xy(pts):
+        # pts: [N, 3]
+        fx, fy, cx, cy = cam_params
+        xy = np.zeros((pts.shape[0], 3))
+        xy[:, 0] = pts[:, 0] * fx / pts[:, 2] + cx
+        xy[:, 1] = pts[:, 1] * fy / pts[:, 2] + cy
+        return xy
+    
+    state_xy = pts_to_xy(state)
+    for i in range(particle_num):
+        # green points
+        cv2.circle(img, (int(state_xy[i, 0]), int(state_xy[i, 1])), 10, (0, 255, 0), -1)
+    
+    for i in range(Rs.shape[0]):
+        # red lines
+        assert Rs[i].sum() == 1
+        idx1 = Rs[i].argmax()
+        idx2 = Rr[i].argmax()
+        cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 2)
+    # save image
+    img_save = np.concatenate([img_orig, img], axis=1)
+    cv2.imwrite(save_path, img_save)
 
 
 def plt_render(particles_set, n_particle, render_path):
