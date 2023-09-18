@@ -55,27 +55,51 @@ def rollout(args):
         texts='What are the objects in the image? Answer:'
     )
     print(query_results)
-    material_prompt = " ".join([
-        "You are an agent in a robotic simulation environment." ,
-        "You are asked to classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
-        "You should respond with one of the following: 'rigid', 'granular', 'deformable', 'rope'.",
-        "Respond unknown if you are not sure.\n\n"
-        "Query: coffee beans. Answer: granular.\n\n",
-        "Query: a rope. Answer: rope.\n\n",
-        "Query: a wooden block. Answer: rigid.\n\n",
-        "Query: bananas. Answer: rigid.\n\n",
-        "Query: play-doh. Answer: deformable.\n\n",
-        "Query: a pile of sand. Answer: granular.\n\n",
-        "Query: bottle. Answer: rigid.\n\n",
-        "Query: clothes. Answer: deformable.\n\n",
-        "Query: laptop. Answer: rigid.\n\n",
-        "Query: " + query_results + ". Answer:",
+
+    obj_prompt = " ".join([
+        "What are the individual objects mentioned in the query?",
+        "Respond unknown if you are not sure."
+        "\n\nQuery: bottle. Answer: bottle.",
+        "\n\nQuery: a knife, and a board. Answer: knife, board.",
+        "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: rope, scissor, a bag of bananas.",
+        "\n\nQuery: a pile of sand. Answer: a pile of sand.",
+        "\n\nQuery: a pile of sand, a pile of play-doh, and a pile of coffee beans. Answer: a pile of sand, a pile of play-doh, a pile of coffee beans.",
+        "\n\nQuery: " + query_results + ". Answer:",
     ])
-    args.material = llm.query(material_prompt)
+    objs_str = llm.query(obj_prompt)
+    print(objs_str)
+    objs = objs_str.rstripe('.').split(',')
+
+    material_list = []
+    for obj_name in objs:
+        obj_name = obj_name.strip(' ')
+    
+        material_prompt = " ".join([
+            "You are an agent in a robotic simulation environment." ,
+            "You are asked to classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
+            "You should respond with one of the following: 'rigid', 'granular', 'deformable', 'rope'.",
+            "Respond unknown if you are not sure."
+            "\n\nQuery: coffee beans. Answer: granular.",
+            "\n\nQuery: a rope. Answer: rope.",
+            "\n\nQuery: a wooden block. Answer: rigid.",
+            "\n\nQuery: bananas. Answer: rigid.",
+            "\n\nQuery: play-doh. Answer: deformable.",
+            "\n\nQuery: a pile of sand. Answer: granular.",
+            "\n\nQuery: bottle. Answer: rigid.",
+            "\n\nQuery: clothes. Answer: deformable.",
+            "\n\nQuery: laptop. Answer: rigid.",
+            "\n\nQuery: " + query_results + ". Answer:",
+        ])
+        material = llm.query(material_prompt)
+        material_list.append(material)
+        print(obj_name, material)
+
+    args.material = material_list
     print(args.material)
 
     segmentation_results = init_parser.segment(
-        texts='|'.join([query_results, args.material])
+        texts=query_results,
+        # texts='|'.join([query_results, args.material])
     )
     # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
     import ipdb; ipdb.set_trace()

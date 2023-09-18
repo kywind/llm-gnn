@@ -10,8 +10,8 @@ from transformers import Blip2Processor, Blip2Model, Blip2ForConditionalGenerati
 
 from omegaconf import OmegaConf
 
-from lavis.models import load_model, load_preprocess
-from lavis.common.registry import registry
+# from lavis.models import load_model, load_preprocess
+# from lavis.common.registry import registry
 
 from segment_anything import SamPredictor, sam_model_registry
 
@@ -36,6 +36,7 @@ class Dataparser:
                 "Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
             )
 
+        """
         query_instruct_blip = False  # 32G RAM OOM
         if query_instruct_blip:
             vlm = load_model(
@@ -45,13 +46,15 @@ class Dataparser:
                 is_eval=True,
                 device="cuda" if torch.cuda.is_available() else "cpu"
             )
+        """
     
     def detect(self, texts):
         inputs = self.det_processor(text=texts, images=self.image, return_tensors="pt").to(self.device)
         outputs = self.det_model(**inputs)
     
     def segment(self, texts):
-        obj_raw, material = texts.split('|')
+        # obj_raw, material = texts.split('|')
+        obj_raw = texts
         obj_list = obj_raw.split(',')
         for i in range(len(obj_list)):
             # remove 'and' in the beginning
@@ -200,7 +203,7 @@ def blipv2_test2():
     ]
     for i, prompt in enumerate(prompts):
         print(i, parser.query(prompt))
-
+"""
 def instruct_blip_test():
     url = "https://iliad.stanford.edu/pg-vlm/example_images/ceramic_bowl.jpg"
     example_image = Image.open(requests.get(url, stream=True).raw).convert("RGB")
@@ -230,7 +233,7 @@ def instruct_blip_test():
 
     print(vlm.generate(question_samples, length_penalty=0, repetition_penalty=1, num_captions=3))
     # (['opaque', 'translucent', 'transparent'], tensor([-0.0448, -4.1387, -4.2793], device='cuda:0'))
-
+"""
 
 if __name__ == "__main__":
     owlvit_test()

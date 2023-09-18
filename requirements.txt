@@ -17,6 +17,6 @@ transformations
 transformers
 accelerate
 bitsandbytes
-omegaconf
-git+https://github.com/salesforce/LAVIS.git
+dgl
+pyflex
 git+https://github.com/facebookresearch/segment-anything.git
