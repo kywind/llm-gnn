@@ -10,6 +10,7 @@ from gnn.utils import load_data, get_env_group, get_scene_info, prepare_input
 
 from data.dataparser import Dataparser
 from data.particle_dataparser import ParticleDataparser
+from data.multi_particle_dataparser import MultiParticleDataparser
 from llm.llm import LLM
 import pyflex
 import pickle
@@ -26,23 +27,26 @@ def rollout(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
+    # single_material = True
     # img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
     # init_img_dir = "vis/g1.png"
     # depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
     # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
     # vis_dir = "vis/granular-dynres-0/"
 
-    # img_dir = "vis/inputs/apples_640.png"
-    # init_img_dir = img_dir
-    # depth_dir = "vis/inputs_depth/apples_640-dpt_beit_large_512.png"
-    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    # vis_dir = "vis/apples_640-0/"
-
-    img_dir = "vis/inputs/dough_640.png"
+    single_material = False
+    img_dir = "vis/inputs/apples2_640.png"
     init_img_dir = img_dir
-    depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png"
+    depth_dir = "vis/inputs_depth/apples2_640-dpt_beit_large_512.png"
     action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    vis_dir = "vis/dough_640-0/"
+    vis_dir = "vis/apples2_640-0/"
+
+    # single_material = False
+    # img_dir = "vis/inputs/dough_640.png"
+    # init_img_dir = img_dir
+    # depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png"
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/dough_640-0/"
 
     os.makedirs(vis_dir, exist_ok=True)
 
@@ -54,60 +58,59 @@ def rollout(args):
     query_results = init_parser.query(
         texts='What are the objects in the image? Answer:'
     )
-    print(query_results)
+    print('query_results:', query_results)
 
     obj_prompt = " ".join([
-        "What are the individual objects mentioned in the query?",
+        "What are the individual objects mentioned in the query? Use singular nouns only.",
         "Respond unknown if you are not sure."
         "\n\nQuery: bottle. Answer: bottle.",
         "\n\nQuery: a knife, and a board. Answer: knife, board.",
-        "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: rope, scissor, a bag of bananas.",
-        "\n\nQuery: a pile of sand. Answer: a pile of sand.",
-        "\n\nQuery: a pile of sand, a pile of play-doh, and a pile of coffee beans. Answer: a pile of sand, a pile of play-doh, a pile of coffee beans.",
+        "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: rope, scissor, banana.",
+        "\n\nQuery: a pile of sand. Answer: sand.",
+        "\n\nQuery: oranges. Answer: orange.",
+        "\n\nQuery: a pile of sand, a pile of play-doh, and a pile of coffee beans. Answer:sand, play-doh, coffee bean.",
         "\n\nQuery: " + query_results + ". Answer:",
     ])
     objs_str = llm.query(obj_prompt)
-    print(objs_str)
-    objs = objs_str.rstripe('.').split(',')
+    print('objs_str:', objs_str)
+    objs = objs_str.rstrip('.').split(',')
 
+    obj_name_list = []
     material_list = []
     for obj_name in objs:
         obj_name = obj_name.strip(' ')
     
         material_prompt = " ".join([
-            "You are an agent in a robotic simulation environment." ,
-            "You are asked to classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
-            "You should respond with one of the following: 'rigid', 'granular', 'deformable', 'rope'.",
+            "Vlassify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
             "Respond unknown if you are not sure."
-            "\n\nQuery: coffee beans. Answer: granular.",
-            "\n\nQuery: a rope. Answer: rope.",
-            "\n\nQuery: a wooden block. Answer: rigid.",
-            "\n\nQuery: bananas. Answer: rigid.",
+            "\n\nQuery: coffee bean. Answer: granular.",
+            "\n\nQuery: rope. Answer: rope.",
+            "\n\nQuery: wooden block. Answer: rigid.",
+            "\n\nQuery: banana. Answer: rigid.",
             "\n\nQuery: play-doh. Answer: deformable.",
-            "\n\nQuery: a pile of sand. Answer: granular.",
+            "\n\nQuery: sand. Answer: granular.",
             "\n\nQuery: bottle. Answer: rigid.",
-            "\n\nQuery: clothes. Answer: deformable.",
+            "\n\nQuery: t-shirt. Answer: deformable.",
+            "\n\nQuery: rice. Answer: granular.",
             "\n\nQuery: laptop. Answer: rigid.",
-            "\n\nQuery: " + query_results + ". Answer:",
+            "\n\nQuery: " + obj_name + ". Answer:",
         ])
         material = llm.query(material_prompt)
+        material = material.rstrip('.')
         material_list.append(material)
-        print(obj_name, material)
+        obj_name_list.append(obj_name)
+        # print(obj_name, material)
 
-    args.material = material_list
-    print(args.material)
+    print('material_list:', material_list)
+    # args.material = material_list
 
-    segmentation_results = init_parser.segment(
-        texts=query_results,
-        # texts='|'.join([query_results, args.material])
-    )
-    # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
-    import ipdb; ipdb.set_trace()
+    if not single_material:
+        # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
+        segmentation_results = init_parser.segment(
+            texts='|'.join([','.join(obj_name_list), ','.join(material_list)])
+        )
 
-    if not args.material == 'granular' and not args.material == 'deformable':
-        print('Not granular nor deformable, exiting...')
-        return
-
+    args.material = 'granular'  # TODO ONLY FOR DEBUGGING
     ### LLM START ### set_initial_args
     ### LLM END ###
 
@@ -198,16 +201,30 @@ def rollout(args):
 
         cam_extrinsics = np.array(pyflex.get_viewMatrix()).reshape(4, 4).T
         cam = [cam_params, cam_extrinsics]
-        data = ParticleDataparser(
-            args=args,
-            img_dir=img_dir,
-            depth_dir=depth_dir,
-            cam=cam
-        )
+
+        if single_material:
+            data = ParticleDataparser(
+                args=args,
+                img_dir=img_dir,
+                depth_dir=depth_dir,
+                cam=cam
+            )
+        else:
+            data = MultiParticleDataparser(
+                args=args,
+                img_dir=img_dir,
+                depth_dir=depth_dir,
+                cam=cam,
+                segmentation=segmentation_results,
+                material=material_list
+            )
+
         with open(action_dir, 'rb') as fp:
             actions = pickle.load(fp)
     else:
         raise NotImplementedError
+    
+    import ipdb; ipdb.set_trace()
 
     for _ in range(1):
         
@@ -238,10 +255,9 @@ def rollout(args):
                 # p_rigid, p_instance, physics_param = get_env_group(args, particle_num, scene_params)
                 # p_instance: B x n_p x n_istance
                 # p_rigid: B x n_instance
-                n_p = particle_num
-                n_instance = 1
-                p_instance = torch.ones((1, n_p, n_instance), device=device, dtype=torch.float32) # the group each particle belongs to
-                p_rigid = torch.zeros((1, n_instance), device=device, dtype=torch.float32) # the rigidness of each group
+                n_p, n_instance, p_instance, p_rigid = data.get_grouping()
+                p_instance = p_instance.to(device)
+                p_rigid = p_rigid.to(device)
 
                 # unsqueeze the batch dimension
                 # attr: B x n_p x attr_dim

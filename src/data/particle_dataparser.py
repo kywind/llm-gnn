@@ -37,6 +37,13 @@ class ParticleDataparser:
         self.history_states.append(self.state.copy())
         self.state = state
 
+    def get_grouping(self):
+        n_p = self.particle_num
+        n_instance = 1
+        p_instance = torch.ones((1, n_p, n_instance), dtype=torch.float32) # the group each particle belongs to
+        p_rigid = torch.zeros((1, n_instance), dtype=torch.float32) # the rigidness of each group
+        return n_p, n_instance, p_instance, p_rigid
+
     def subsample(self, particle_num=None, particle_r=None, particle_den=None):
         if particle_num is not None:
             sampled_pts, particle_r = fps(self.pcd, particle_num)
