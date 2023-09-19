@@ -39,16 +39,17 @@ class MultiParticleDataparser:
         self.pcd, self.pcd_label = self.parse_pcd(depth)
 
         pcd_label_list = np.unique(self.pcd_label)
+        self.n_instance = pcd_label_list.shape[0]
         pcd_sample_list = []
-        particle_num_list = []
+        # particle_num_list = []
         particle_r_list = []
         particle_den_list = []
         for i in range(pcd_label_list.shape[0]):
-            particle_num_i = (self.pcd_label == i).sum()
+            # particle_num_i = int((self.pcd_label == i).sum())
             pcd_i = self.pcd[self.pcd_label[:, 0] == i]
-            pcd_sample_i, _, particle_r_i, particle_den_i = self.subsample(pcd_i, particle_num=particle_num_i)
+            pcd_sample_i, _, particle_r_i, particle_den_i = self.subsample(pcd_i, particle_num=self.particle_num)
             pcd_sample_list.append(pcd_sample_i)
-            particle_num_list.append(particle_num_i)
+            # particle_num_list.append(particle_num_i)
             particle_r_list.append(particle_r_i)
             particle_den_list.append(particle_den_i)
 
@@ -58,7 +59,7 @@ class MultiParticleDataparser:
 
         pcd_sample = np.vstack(pcd_sample_list)
 
-        self.attrs = np.zeros((self.particle_num, args.attr_dim), dtype=pcd_sample.dtype) # [particle_num, attr_dim]
+        self.attrs = np.zeros((self.particle_num * self.n_instance, args.attr_dim), dtype=pcd_sample.dtype) # [particle_num, attr_dim]
         self.state = pcd_sample
         self.action = None
         self.Rr = None
@@ -108,14 +109,14 @@ class MultiParticleDataparser:
         return pcd, pcd_label
 
     def get_grouping(self):
-        n_p = self.particle_num
         n_instance = np.unique(self.pcd_label).shape[0]
+        n_p = self.particle_num * n_instance
         p_instance = torch.ones((1, n_p, n_instance), dtype=torch.float32) # the group each particle belongs to
         p_rigid = torch.zeros((1, n_instance), dtype=torch.float32) # the rigidness of each group
 
-        for i in range(n_instance):
-            import ipdb; ipdb.set_trace()
-            p_instance[0, :, i] = (self.pcd_label[:, 0] == i).astype(np.float32)
+        # for i in range(n_instance):
+        #     # import ipdb; ipdb.set_trace()
+        #     p_instance[0, :, i] = torch.tensor((self.pcd_label[:, 0] == i).astype(np.float32))
 
         return n_p, n_instance, p_instance, p_rigid
 
@@ -138,7 +139,7 @@ class MultiParticleDataparser:
     def generate_relation(self):
         args = self.args
         B = 1
-        N = self.particle_num
+        N = self.particle_num * self.n_instance
         rels = []
 
         s_cur = torch.tensor(self.state).unsqueeze(0)
@@ -192,14 +193,14 @@ class MultiParticleDataparser:
 
         push_dir_ortho_cam = np.array([-push_dir_cam[1], push_dir_cam[0], 0.0])
         pos_diff_cam = self.state - s_3d_cam[None, :] # [particle_num, 3]
-        pos_diff_ortho_proj_cam = (pos_diff_cam * np.tile(push_dir_ortho_cam[None, :], (self.particle_num, 1))).sum(axis=1) # [particle_num,]
-        pos_diff_proj_cam = (pos_diff_cam * np.tile(push_dir_cam[None, :], (self.particle_num, 1))).sum(axis=1) # [particle_num,]
+        pos_diff_ortho_proj_cam = (pos_diff_cam * np.tile(push_dir_ortho_cam[None, :], (self.particle_num * self.n_instance, 1))).sum(axis=1) # [particle_num,]
+        pos_diff_proj_cam = (pos_diff_cam * np.tile(push_dir_cam[None, :], (self.particle_num * self.n_instance, 1))).sum(axis=1) # [particle_num,]
         pos_diff_l_mask = ((pos_diff_proj_cam < push_l) & (pos_diff_proj_cam > 0.0)).astype(np.float32) # hard mask
         pos_diff_w_mask = np.maximum(np.maximum(-pusher_w - pos_diff_ortho_proj_cam, 0.), # soft mask
                                     np.maximum(pos_diff_ortho_proj_cam - pusher_w, 0.))
         pos_diff_w_mask = np.exp(-pos_diff_w_mask / 0.01) # [particle_num,]
         pos_diff_to_end_cam = (e_3d_cam[None, :] - self.state) # [particle_num, 3]
-        pos_diff_to_end_cam = (pos_diff_to_end_cam * np.tile(push_dir_cam[None, :], (self.particle_num, 1))).sum(axis=1) # [particle_num,]
+        pos_diff_to_end_cam = (pos_diff_to_end_cam * np.tile(push_dir_cam[None, :], (self.particle_num * self.n_instance, 1))).sum(axis=1) # [particle_num,]
         states_delta = pos_diff_to_end_cam[:, None] * push_dir_cam[None, :] * pos_diff_l_mask[:, None] * pos_diff_w_mask[:, None]
 
         self.action = states_delta

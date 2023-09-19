@@ -20,7 +20,7 @@ class ParticleDataparser:
         self.global_scale = 24
         self.depth_thres = 0.599 / 0.8
         self.particle_num = 50
-        self.adj_thresh = 0.1
+        self.adj_thresh = 0.04
 
         depth = cv2.imread(self.depth_dir, cv2.IMREAD_ANYDEPTH) / (self.global_scale * 1000.0)
         self.pcd = depth2fgpcd(depth, (depth < self.depth_thres), self.cam_params) # [N, 3]

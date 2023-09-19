@@ -27,24 +27,24 @@ def rollout(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    # single_material = True
-    # img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
-    # init_img_dir = "vis/g1.png"
-    # depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
-    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    # vis_dir = "vis/granular-dynres-0/"
-
-    single_material = False
-    img_dir = "vis/inputs/apples2_640.png"
-    init_img_dir = img_dir
-    depth_dir = "vis/inputs_depth/apples2_640-dpt_beit_large_512.png"
+    single_material = True
+    img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
+    init_img_dir = "vis/g1.png"
+    depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
     action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    vis_dir = "vis/apples2_640-0/"
+    vis_dir = "vis/granular-dynres-0/"
+
+    # single_material = False
+    # img_dir = "vis/inputs/apples2_640.png"
+    # init_img_dir = img_dir
+    # depth_dir = "vis/inputs_depth/apples2_640-dpt_beit_large_512.png"
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/apples2_640-0/"
 
     # single_material = False
     # img_dir = "vis/inputs/dough_640.png"
     # init_img_dir = img_dir
-    # depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png"
+    # depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png" # MiDaS
     # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
     # vis_dir = "vis/dough_640-0/"
 
@@ -61,13 +61,14 @@ def rollout(args):
     print('query_results:', query_results)
 
     obj_prompt = " ".join([
-        "What are the individual objects mentioned in the query? Use singular nouns only.",
+        "What are the individual objects mentioned in the query?",
         "Respond unknown if you are not sure."
-        "\n\nQuery: bottle. Answer: bottle.",
-        "\n\nQuery: a knife, and a board. Answer: knife, board.",
-        "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: rope, scissor, banana.",
+        "\n\nQuery: bottle. Answer: a bottle.",
+        "\n\nQuery: a knife, and a board. Answer: a knife, a board.",
+        "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: a rope, scissor, a banana.",
         "\n\nQuery: a pile of sand. Answer: sand.",
-        "\n\nQuery: oranges. Answer: orange.",
+        "\n\nQuery: oranges. Answer: oranges.",
+        "\n\nQuery: rices. Answer: rices.",
         "\n\nQuery: a pile of sand, a pile of play-doh, and a pile of coffee beans. Answer:sand, play-doh, coffee bean.",
         "\n\nQuery: " + query_results + ". Answer:",
     ])
@@ -81,16 +82,17 @@ def rollout(args):
         obj_name = obj_name.strip(' ')
     
         material_prompt = " ".join([
-            "Vlassify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
+            "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
             "Respond unknown if you are not sure."
             "\n\nQuery: coffee bean. Answer: granular.",
             "\n\nQuery: rope. Answer: rope.",
-            "\n\nQuery: wooden block. Answer: rigid.",
-            "\n\nQuery: banana. Answer: rigid.",
+            "\n\nQuery: a wooden block. Answer: rigid.",
+            "\n\nQuery: a banana. Answer: rigid.",
+            "\n\nQuery: an orange. Answer: rigid.",
             "\n\nQuery: play-doh. Answer: deformable.",
             "\n\nQuery: sand. Answer: granular.",
-            "\n\nQuery: bottle. Answer: rigid.",
-            "\n\nQuery: t-shirt. Answer: deformable.",
+            "\n\nQuery: a bottle. Answer: rigid.",
+            "\n\nQuery: a t-shirt. Answer: deformable.",
             "\n\nQuery: rice. Answer: granular.",
             "\n\nQuery: laptop. Answer: rigid.",
             "\n\nQuery: " + obj_name + ". Answer:",
@@ -224,13 +226,13 @@ def rollout(args):
     else:
         raise NotImplementedError
     
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
 
     for _ in range(1):
         
         # memory: B x mem_nlayer x particle_num x nf_memory
         # for now, only used as a placeholder
-        memory_init = model.init_memory(1, data.particle_num)
+        memory_init = model.init_memory(1, data.particle_num * data.n_instance)
 
         # model rollout
         rollout_len = 10
@@ -295,6 +297,7 @@ def rollout(args):
                 next_state = pred_pos[0].detach().cpu().numpy()
 
                 # visualize the particles on the image
+                # draw_particles_multi(data, next_state, os.path.join(vis_dir, 'test_{}.png'.format(step_id)))
                 draw_particles(data, next_state, os.path.join(vis_dir, 'test_{}.png'.format(step_id)))
  
                 # record the prediction
@@ -304,6 +307,18 @@ def rollout(args):
         # particles_set = [np.stack(data.history_states + [next_state], axis=0)]
         # plt_render(particles_set, particle_num, 'vis/vid_test_plt_2.gif')
 
+
+def draw_particles_multi(data, next_state, save_path):
+    state = data.state
+    particle_num_multi = state.shape[0]
+    particle_num = data.particle_num
+    attrs = data.attrs
+    Rr = data.Rr
+    Rs = data.Rs
+    action = data.action
+    cam_params = data.cam_params
+    cam_extrinsics = data.cam_extrinsics
+    import ipdb; ipdb.set_trace()
 
 def draw_particles(data, next_state, save_path):
     state = data.state
