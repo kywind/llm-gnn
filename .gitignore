@@ -6,3 +6,5 @@ lmp_output/
 vis/
 MiDaS/
 weights/
+/data
+/third-party

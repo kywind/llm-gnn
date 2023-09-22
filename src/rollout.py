@@ -27,12 +27,12 @@ def rollout(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    single_material = True
-    img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
-    init_img_dir = "vis/g1.png"
-    depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
-    action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    vis_dir = "vis/granular-dynres-0/"
+    # single_material = True
+    # img_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png"  # blipv2 cannot identify this image
+    # init_img_dir = "vis/g1.png"
+    # depth_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_depth.png"
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/granular-dynres-0/"
 
     # single_material = False
     # img_dir = "vis/inputs/apples2_640.png"
@@ -41,12 +41,12 @@ def rollout(args):
     # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
     # vis_dir = "vis/apples2_640-0/"
 
-    # single_material = False
-    # img_dir = "vis/inputs/dough_640.png"
-    # init_img_dir = img_dir
-    # depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png" # MiDaS
-    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    # vis_dir = "vis/dough_640-0/"
+    single_material = False
+    img_dir = "vis/inputs/dough_640.png"
+    init_img_dir = img_dir
+    depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png" # MiDaS
+    action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    vis_dir = "vis/dough_640-0/"
 
     os.makedirs(vis_dir, exist_ok=True)
 
