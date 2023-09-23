@@ -41,12 +41,19 @@ def rollout(args):
     # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
     # vis_dir = "vis/apples2_640-0/"
 
+    # single_material = False
+    # img_dir = "vis/inputs/dough_640.png"
+    # init_img_dir = img_dir
+    # depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png" # MiDaS
+    # action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
+    # vis_dir = "vis/dough_640-0/"
+
     single_material = False
-    img_dir = "vis/inputs/dough_640.png"
+    img_dir = "../data/2023-09-13-15-19-50-765863/camera_0/color/0.png"
     init_img_dir = img_dir
-    depth_dir = "vis/inputs_depth/dough_640-dpt_beit_large_512.png" # MiDaS
+    depth_dir = "../data/2023-09-13-15-19-50-765863/camera_0/depth/0.png"
     action_dir = "../../dyn-res-pile-manip/data/gnn_dyn_data/0/actions.p"
-    vis_dir = "vis/dough_640-0/"
+    vis_dir = "vis/multiview-0/"
 
     os.makedirs(vis_dir, exist_ok=True)
 
@@ -56,7 +63,7 @@ def rollout(args):
     llm = LLM(args)
 
     query_results = init_parser.query(
-        texts='What are the objects in the image? Answer:'
+        texts='List all the objects on the table. Answer:'
     )
     print('query_results:', query_results)
 
@@ -107,8 +114,9 @@ def rollout(args):
     # args.material = material_list
 
     if not single_material:
-        # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
-        segmentation_results = init_parser.segment(
+        # segmentation_results: aggregated masks, text labels
+        # detection_results: boxes, scores, labels
+        segmentation_results, detection_results = init_parser.segment_gdino(
             texts='|'.join([','.join(obj_name_list), ','.join(material_list)])
         )
 
@@ -218,6 +226,7 @@ def rollout(args):
                 depth_dir=depth_dir,
                 cam=cam,
                 segmentation=segmentation_results,
+                detection=detection_results,
                 material=material_list
             )
 
@@ -346,14 +355,14 @@ def draw_particles(data, next_state, save_path):
     state_xy = pts_to_xy(state)
     for i in range(particle_num):
         # green points
-        cv2.circle(img, (int(state_xy[i, 0]), int(state_xy[i, 1])), 10, (0, 255, 0), -1)
+        cv2.circle(img, (int(state_xy[i, 0]), int(state_xy[i, 1])), 3, (0, 255, 0), -1)
     
     for i in range(Rs.shape[0]):
         # red lines
         assert Rs[i].sum() == 1
         idx1 = Rs[i].argmax()
         idx2 = Rr[i].argmax()
-        cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 2)
+        cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 1)
     # save image
     img_save = np.concatenate([img_orig, img], axis=1)
     cv2.imwrite(save_path, img_save)

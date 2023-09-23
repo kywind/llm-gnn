@@ -9,7 +9,7 @@ from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
         opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
 
 class MultiParticleDataparser:
-    def __init__(self, args, img_dir, depth_dir, cam, segmentation=None, material=None):
+    def __init__(self, args, img_dir, depth_dir, cam, segmentation=None, detection=None, material=None):
         self.args = args
         self.img_dir = img_dir
         self.depth_dir = depth_dir
@@ -18,10 +18,11 @@ class MultiParticleDataparser:
         self.material = material  # list
 
         # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
-        self.crop_imgs, self.crop_masks = zip(*segmentation[0])
-        self.boxes = segmentation[1]
-        self.scores = segmentation[2]
-        self.labels = segmentation[3]
+        # self.crop_imgs, self.crop_masks = zip(*segmentation[0])
+        self.masks = segmentation[0]
+        # self.boxes = detection[0]
+        # self.scores = detection[1]
+        self.labels = detection[2]
 
         self.image = Image.open(self.img_dir)
 
@@ -71,41 +72,34 @@ class MultiParticleDataparser:
         self.state = state
 
     def parse_pcd(self, depth):
-        boxes = self.boxes  # [N, 4]
-        masks = self.crop_masks
-
         pcd = np.zeros((0, 3))
-        pcd_label = np.zeros((0, 1))
-        for i in range(boxes.shape[0]):
-            # crop depth
-            box = boxes[i]
-            depth_crop = depth[int(box[1]):int(box[3]), int(box[0]):int(box[2])].copy()
+        pcd_label = np.zeros((0, 2)) # dim 1: [class label, instance label]
 
-            h, w = depth_crop.shape
-            mask = np.array(masks[i])
-            mask = np.logical_and(mask, depth_crop > 0)
-            # mask = (depth_crop <= 0.599/0.8)
+        for i in range(self.masks.shape[0]):
+            mask = self.masks[i].detach().cpu().numpy()
+
+            mask = np.logical_and(mask, depth > 0)
             fgpcd = np.zeros((mask.sum(), 3))
-            fgpcd_label = np.zeros((mask.sum(), 1))
+            fgpcd_label = np.zeros((mask.sum(), 2))
             fx, fy, cx, cy = self.cam_params
 
             # transform cam params with boxes
-            box = boxes[i].detach().cpu().numpy()
-            cx = cx - box[0]
-            cy = cy - box[1]
+            # cx = cx - box[0]
+            # cy = cy - box[1]
 
-            pos_x, pos_y = np.meshgrid(np.arange(w), np.arange(h))
+            pos_x, pos_y = np.meshgrid(np.arange(mask.shape[1]), np.arange(mask.shape[0]))  # w, h
             pos_x = pos_x[mask]
             pos_y = pos_y[mask]
-            fgpcd[:, 0] = (pos_x - cx) * depth_crop[mask] / fx
-            fgpcd[:, 1] = (pos_y - cy) * depth_crop[mask] / fy
-            fgpcd[:, 2] = depth_crop[mask]
+            fgpcd[:, 0] = (pos_x - cx) * depth[mask] / fx
+            fgpcd[:, 1] = (pos_y - cy) * depth[mask] / fy
+            fgpcd[:, 2] = depth[mask]
 
-            fgpcd_label[:, 0] = i
-        
+            fgpcd_label[:, 0] = self.labels[i].item()
+            fgpcd_label[:, 1] = i
+
             pcd = np.vstack((pcd, fgpcd))
             pcd_label = np.vstack((pcd_label, fgpcd_label))
-        
+
         return pcd, pcd_label
 
     def get_grouping(self):
