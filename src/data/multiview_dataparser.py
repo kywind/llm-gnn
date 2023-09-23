@@ -31,28 +31,34 @@ class MultiviewDataparser:
     fusing depth from multiview images
     """
 
-    def __init__(self, args):
+    def __init__(self, args, data_dir):
         self.args = args
         self.device = args.device
 
         n_cameras = 4
-        base_dir = "../data/2023-09-13-15-19-50-765863/"
-        rgb_dir = [base_dir + f"camera_{i}/color" for i in range(n_cameras)]
-        depth_dir = [base_dir + f"camera_{i}/depth" for i in range(n_cameras)]
+        rgb_dir = [data_dir + f"camera_{i}/color" for i in range(n_cameras)]
+        depth_dir = [data_dir + f"camera_{i}/depth" for i in range(n_cameras)]
 
         img_index = 0
         self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
         self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
         self.n_cameras = n_cameras
+    
+    def prepare_query_model(self):
+        self.query_processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
+        self.query_model = Blip2ForConditionalGeneration.from_pretrained(
+            "Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
+        )
+
+    def del_query_model(self):
+        del self.query_processor
+        del self.query_model
+        torch.cuda.empty_cache()
 
     def query(self, texts, camera_index, bbox=None, mask=None):
-        query_processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        query_model = Blip2ForConditionalGeneration.from_pretrained(
-                "Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
-            )
-        inputs = query_processor(text=texts, images=self.rgb_imgs[camera_index], return_tensors="pt").to("cuda", torch.float16)
-        generated_ids = query_model.generate(**inputs)
-        generated_text = query_processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        inputs = self.query_processor(text=texts, images=self.rgb_imgs[camera_index], return_tensors="pt").to("cuda", torch.float16)
+        generated_ids = self.query_model.generate(**inputs)
+        generated_text = self.query_processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         return generated_text
 
     def detect_gdino(self, captions, box_thresholds, camera_index):  # captions: list
@@ -101,7 +107,7 @@ class MultiviewDataparser:
         for box, score, label in zip(boxes, scores, labels):
             box = [round(i, 2) for i in box.tolist()]
             print(f"Detected {captions[label.item()]} with confidence {round(score.item(), 3)} at location {box}")
-        return boxes, scores, labels, logits
+        return boxes, scores, labels
     
     def segment_gdino(self, texts, camera_index):
         device = self.device
@@ -148,7 +154,7 @@ class MultiviewDataparser:
             for j in range(i+1, num_masks):
                 IoU = (masks[i] & masks[j]).sum().item() / (masks[i] | masks[j]).sum().item()
                 if IoU > 0.9:
-                    if logits[i].max().item() > logits[j].max().item():
+                    if scores[i].item() > scores[j].item():
                         to_remove.append(j)
                     else:
                         to_remove.append(i)

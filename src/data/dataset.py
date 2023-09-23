@@ -8,7 +8,7 @@ from PIL import Image
 from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
         opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
 
-class MultiParticleDataparser:
+class ParticleDataset:
     def __init__(self, args, img_dir, depth_dir, cam, segmentation=None, detection=None, material=None):
         self.args = args
         self.img_dir = img_dir

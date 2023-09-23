@@ -108,7 +108,10 @@ class Dataparser:
         for box, score, label in zip(boxes, scores, labels):
             box = [round(i, 2) for i in box.tolist()]
             print(f"Detected {captions[label.item()]} with confidence {round(score.item(), 3)} at location {box}")
-        return boxes, scores, labels, logits
+        
+        del det_model
+        torch.cuda.empty_cache()
+        return boxes, scores, labels
 
     def segment_gdino(self, texts):
         device = self.device
@@ -116,7 +119,7 @@ class Dataparser:
         obj_list = obj_raw.split(',')
         text_prompts = [f"{obj}" for obj in obj_list]
         print('segment prompt:', text_prompts)  # things like: ['apple', 'banana', 'orange']
-        boxes, scores, labels, logits = self.detect_gdino(text_prompts, box_thresholds=0.5)
+        boxes, scores, labels = self.detect_gdino(text_prompts, box_thresholds=0.5)
 
         image = np.array(self.image)
         H, W = image.shape[:2]
@@ -130,6 +133,7 @@ class Dataparser:
             # return torch.zeros((H, W), dtype=torch.bool, device=device), ['background']
 
         # load sam model
+        import ipdb; ipdb.set_trace()
         sam = sam_model_registry["default"](checkpoint='weights/sam_vit_h_4b8939.pth')
         sam_model = SamPredictor(sam)
         sam_model.model = sam_model.model.to(device)
@@ -155,7 +159,7 @@ class Dataparser:
             for j in range(i+1, num_masks):
                 IoU = (masks[i] & masks[j]).sum().item() / (masks[i] | masks[j]).sum().item()
                 if IoU > 0.9:
-                    if logits[i].max().item() > logits[j].max().item():
+                    if scores[i].item() > scores[j].item():
                         to_remove.append(j)
                     else:
                         to_remove.append(i)
@@ -289,7 +293,7 @@ class Dataparser:
         query_model = Blip2ForConditionalGeneration.from_pretrained(
                 "Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
             )
-        inputs = query_processor(text=texts, images=self.image, return_tensors="pt").to("cuda", torch.float16)
+        inputs = query_processor(text=texts, images=self.image, return_tensors="pt").to(self.device, torch.float16)
         generated_ids = query_model.generate(**inputs)
         generated_text = query_processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         return generated_text
@@ -345,8 +349,8 @@ def blipv2_test():
 
 def blipv2_test2():
     from config import gen_args
-    # img_dir = '/home/zhangkaifeng/projects/dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png'
-    img_dir = '/home/zhangkaifeng/projects/llm-gnn/src/vis/g1.png'
+    # img_dir = '../../dyn-res-pile-manip/data/gnn_dyn_data/0/0_color.png'
+    img_dir = 'vis/g1.png'
     args = gen_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -399,8 +403,8 @@ def instruct_blip_test():
 
 def run_grounding_dino(image, captions, box_thresholds):
     device = "cuda:0"
-    config_file = '../../third-party/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py'
-    grounded_checkpoint = '../weights/groundingdino_swinb_cogcoor.pth'
+    config_file = '../third-party/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py'
+    grounded_checkpoint = 'weights/groundingdino_swinb_cogcoor.pth'
 
     args = SLConfig.fromfile(config_file)
     args.device = device
@@ -456,7 +460,7 @@ def grounded_dino_sam_test(img_path, text_prompts, box_thresholds):
     from segment_anything import build_sam, SamPredictor
 
     device = "cuda:0"
-    sam_checkpoint = '../weights/sam_vit_h_4b8939.pth'
+    sam_checkpoint = 'weights/sam_vit_h_4b8939.pth'
 
     # load sam model
     sam = sam_model_registry["default"](checkpoint=sam_checkpoint)
@@ -466,7 +470,7 @@ def grounded_dino_sam_test(img_path, text_prompts, box_thresholds):
     # text_prompts = ['a bag of flour','a rolling pin','a dough ball']
     # box_thresholds = [0.5, 0.5, 0.4]
 
-    # img_path = '../vis/inputs/dough_640.png'
+    # img_path = 'vis/inputs/dough_640.png'
     image = cv2.imread(img_path)[..., ::-1]
     sam_model.set_image(image)
 
@@ -537,7 +541,7 @@ def grounded_dino_sam_test(img_path, text_prompts, box_thresholds):
     aggr_mask_vis = Image.fromarray(aggr_mask_vis)
     image_pil = Image.fromarray(image)
     aggr_mask_vis = Image.blend(image_pil, aggr_mask_vis, 0.7)
-    aggr_mask_vis.save('../vis/grounded_dino_sam_test.png')
+    aggr_mask_vis.save('vis/grounded_dino_sam_test.png')
 
     # return aggr_mask, text_labels
 
@@ -548,7 +552,7 @@ def owlvit_sam_test(img_path, text_prompts, box_thresholds):
     # url = "https://i0.wp.com/post.healthline.com/wp-content/uploads/2021/06/apple-varieties-types-1296x728-header.jpg?w=1155&h=1528"
     # image = Image.open(requests.get(url, stream=True).raw)
 
-    # img_path = '../vis/inputs/dough_640.png'
+    # img_path = 'vis/inputs/dough_640.png'
     image_pil = Image.open(img_path)
     image = np.array(image_pil)
 
@@ -567,7 +571,7 @@ def owlvit_sam_test(img_path, text_prompts, box_thresholds):
     # labels: (n_detection,)
 
     # load sam model
-    sam_checkpoint = '../weights/sam_vit_h_4b8939.pth'
+    sam_checkpoint = 'weights/sam_vit_h_4b8939.pth'
     sam = sam_model_registry["default"](checkpoint=sam_checkpoint)
     sam_model = SamPredictor(sam)
     sam_model.model = sam_model.model.to(device)
@@ -607,17 +611,17 @@ def owlvit_sam_test(img_path, text_prompts, box_thresholds):
 
     aggr_mask_vis = Image.fromarray(aggr_mask_vis)
     aggr_mask_vis = Image.blend(image_pil, aggr_mask_vis, 0.7)
-    aggr_mask_vis.save('../vis/owlvit_sam_test.png')
+    aggr_mask_vis.save('vis/owlvit_sam_test.png')
 
 
 if __name__ == "__main__":
     # blipv2_test()
     # instruct_blip_test()
 
-    # img_path = '../vis/inputs/dough_640.png'
+    # img_path = 'vis/inputs/dough_640.png'
     # text_prompts = ['a bag of flour','a rolling pin','a dough ball']
 
-    img_path = '../../data/2023-09-13-15-19-50-765863/camera_0/color/0.png'
+    img_path = '../data/2023-09-13-15-19-50-765863/camera_0/color/0.png'
     text_prompts = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat', 'tabletop']
     box_thresholds = 0.5
     grounded_dino_sam_test(img_path, text_prompts, box_thresholds)

@@ -19,7 +19,7 @@ cd ../..
 # this follows the instructions in https://github.com/WangYixuan12/dyn-res-pile-manip/
 # ensure docker is installed
 cd third-party
-git clone git@github.com:YunzhuLi/PyFleX.git
+git clone git@github.com:kywind/PyFleX.git
 conda install pybind11 -c conda-forge
 
 CURR_CONDA=$CONDA_DEFAULT_ENV
