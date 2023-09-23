@@ -9,33 +9,29 @@ from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
         opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
 
 class MultiviewParticleDataset:
-    def __init__(self, args, segmentation=None, detection=None, cam=None, material=None):
+    def __init__(self, args, depths=None, masks=None, cams=None, 
+            text_labels_list=None, material_dict=None):
         self.args = args
-        self.cam_params, self.cam_extrinsics = cam
-
-        self.material = material  # list
-
-        # segmentation_results: predictions=list(crop_img, mask), boxes, scores, labels
-        # self.crop_imgs, self.crop_masks = zip(*segmentation[0])
-        self.masks = segmentation[0]
-        # self.boxes = detection[0]
-        # self.scores = detection[1]
-        self.labels = detection[2]
-
-        self.image = Image.open(self.img_dir)
+        self.depths = depths  # list of PIL depth images
+        self.masks = masks  # list of masks
+        self.cam_params, self.cam_extrinsics = cams  # (4,) * n_cameras, (4, 4) * n_cameras
+        self.text_labels = text_labels_list  # list of text labels
+        self.material_dict = material_dict  # dict of {obj_name: material_name}
 
         self.global_scale = 24
         self.depth_thres = 0.599 / 0.8
         self.particle_num = 50
         self.adj_thresh = 0.1
 
-        depth = cv2.imread(self.depth_dir, cv2.IMREAD_ANYDEPTH) / (self.global_scale * 1000.0)
+        self.n_cameras = len(self.depths)
 
-        # self.pcd = depth2fgpcd(depth, (depth < self.depth_thres), self.cam_params) # [N, 3]
-        # self.pcd_label = None
-        # pcd_sample, _, self.particle_r, self.particle_den = self.subsample(self.pcd, particle_num=self.particle_num) # [particle_num, 3]
-
-        self.pcd, self.pcd_label = self.parse_pcd(depth)
+        for camera_index in range(self.n_cameras):
+            depth = np.array(self.depths[camera_index])
+            masks = np.array(self.masks[camera_index])
+            cam_param = self.cam_params[camera_index]
+            cam_extrinsic = self.cam_extrinsics[camera_index]
+            pcd_list = self.parse_pcd(depth, masks, cam_param, cam_extrinsic)
+            import ipdb; ipdb.set_trace()
 
         pcd_label_list = np.unique(self.pcd_label)
         self.n_instance = pcd_label_list.shape[0]
@@ -69,22 +65,16 @@ class MultiviewParticleDataset:
         self.history_states.append(self.state.copy())
         self.state = state
 
-    def parse_pcd(self, depth):
-        pcd = np.zeros((0, 3))
-        pcd_label = np.zeros((0, 2)) # dim 1: [class label, instance label]
-
-        for i in range(self.masks.shape[0]):
-            mask = self.masks[i].detach().cpu().numpy()
-
+    def parse_pcd(self, depth, masks, cam_param, cam_extrinsic):
+        pcd_list = []
+        for i in range(masks.shape[0]):
+            mask = masks[i]
             mask = np.logical_and(mask, depth > 0)
+
+            # to camera frame
             fgpcd = np.zeros((mask.sum(), 3))
             fgpcd_label = np.zeros((mask.sum(), 2))
-            fx, fy, cx, cy = self.cam_params
-
-            # transform cam params with boxes
-            # cx = cx - box[0]
-            # cy = cy - box[1]
-
+            fx, fy, cx, cy = cam_param
             pos_x, pos_y = np.meshgrid(np.arange(mask.shape[1]), np.arange(mask.shape[0]))  # w, h
             pos_x = pos_x[mask]
             pos_y = pos_y[mask]
@@ -92,13 +82,12 @@ class MultiviewParticleDataset:
             fgpcd[:, 1] = (pos_y - cy) * depth[mask] / fy
             fgpcd[:, 2] = depth[mask]
 
-            fgpcd_label[:, 0] = self.labels[i].item()
-            fgpcd_label[:, 1] = i
+            # to world frame
+            fgpcd = np.hstack((fgpcd, np.ones((fgpcd.shape[0], 1))))
+            fgpcd = np.matmul(fgpcd, np.linalg.inv(cam_extrinsic).T)[:, :3]
 
-            pcd = np.vstack((pcd, fgpcd))
-            pcd_label = np.vstack((pcd_label, fgpcd_label))
-
-        return pcd, pcd_label
+            pcd_list.append(fgpcd)
+        return pcd_list
 
     def get_grouping(self):
         n_instance = np.unique(self.pcd_label).shape[0]

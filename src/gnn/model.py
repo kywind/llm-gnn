@@ -110,6 +110,7 @@ class DynamicsPredictor(nn.Module):
             self.mem_dim = args.nf_effect * args.mem_nlayer  # default: mem_nlayer = 2 or 0
             self.action_dim = args.action_dim  # default: 2/3 or 0
             self.phys_dim = 1
+            self.density_dim = 0
 
         elif args.material == 'rope':
             self.attr_dim = args.attr_dim

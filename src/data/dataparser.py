@@ -133,7 +133,6 @@ class Dataparser:
             # return torch.zeros((H, W), dtype=torch.bool, device=device), ['background']
 
         # load sam model
-        import ipdb; ipdb.set_trace()
         sam = sam_model_registry["default"](checkpoint='weights/sam_vit_h_4b8939.pth')
         sam_model = SamPredictor(sam)
         sam_model.model = sam_model.model.to(device)

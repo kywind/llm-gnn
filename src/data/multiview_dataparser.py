@@ -38,11 +38,16 @@ class MultiviewDataparser:
         n_cameras = 4
         rgb_dir = [data_dir + f"camera_{i}/color" for i in range(n_cameras)]
         depth_dir = [data_dir + f"camera_{i}/depth" for i in range(n_cameras)]
+        intr_dir = [data_dir + f"camera_{i}/camera_params.npy" for i in range(n_cameras)]
+        extr_dir = [data_dir + f"camera_{i}/camera_extrinsics.npy" for i in range(n_cameras)]
 
         img_index = 0
         self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
         self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
         self.n_cameras = n_cameras
+
+        self.cam_params = [np.load(intr_dir[i]) for i in range(n_cameras)]  # (4,) * n_cameras
+        self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
     
     def prepare_query_model(self):
         self.query_processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
@@ -109,13 +114,11 @@ class MultiviewDataparser:
             print(f"Detected {captions[label.item()]} with confidence {round(score.item(), 3)} at location {box}")
         return boxes, scores, labels
     
-    def segment_gdino(self, texts, camera_index):
+    def segment_gdino(self, obj_list, camera_index):
         device = self.device
-        obj_raw, material = texts.split('|')
-        obj_list = obj_raw.split(',')
         text_prompts = [f"{obj}" for obj in obj_list]
         print('segment prompt:', text_prompts)  # things like: ['apple', 'banana', 'orange']
-        boxes, scores, labels, logits = self.detect_gdino(text_prompts, box_thresholds=0.5)
+        boxes, scores, labels = self.detect_gdino(text_prompts, box_thresholds=0.5, camera_index=camera_index)
 
         image = np.array(self.rgb_imgs[camera_index])
         H, W = image.shape[:2]

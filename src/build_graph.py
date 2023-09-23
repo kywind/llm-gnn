@@ -8,7 +8,7 @@ from gnn.model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
 from gnn.utils import set_seed, Tee, count_parameters
 from gnn.utils import load_data, get_env_group, get_scene_info, prepare_input
 
-from data.dataparser import MultiviewDataparser
+from data.multiview_dataparser import MultiviewDataparser
 from data.multiview_dataset import MultiviewParticleDataset
 from llm.llm import LLM
 import pyflex
@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 import cv2
+import glob
 
 
 def build_graph(args):
@@ -29,15 +30,17 @@ def build_graph(args):
     camera_indices = [0, 1, 2, 3]
     data_dir = "../data/2023-09-13-15-19-50-765863/"
     vis_dir = "vis/multiview-0/"
+    debug = True
+
+    cam_dir = data_dir + "camera_0/color"
 
     os.makedirs(vis_dir, exist_ok=True)
 
     # initial dataparser
     init_parser = MultiviewDataparser(args, data_dir)
-    # llm = LLM(args)
 
-    debug = True
     if not debug:
+        llm = LLM(args)
         init_parser.prepare_query_model()
 
         obj_list = []
@@ -76,16 +79,13 @@ def build_graph(args):
     # print('objs_str:', objs_str)
     # objs = objs_str.rstrip('.').split(',')
 
-    obj_name_list = []
-    material_list = []
-    
-    obj_name_list = obj_list
-    material_list = ['rigid'] * len(obj_list)
+    material_dict = {}
+    for obj_name in obj_list:
+        material_dict[obj_name] = 'rigid'  # TODO
 
-    # TODO change to all kinds of materials. Rigid objects for debugging now
-    # for obj_name in objs:
-    #     obj_name = obj_name.strip(' ')
-    # 
+    print('material_dict:', material_dict)
+
+    # for obj_name in obj_list:
     #     material_prompt = " ".join([
     #         "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
     #         "Respond unknown if you are not sure."
@@ -105,22 +105,48 @@ def build_graph(args):
     #     material = llm.query(material_prompt)
     #     material = material.rstrip('.')
     #     material_list.append(material)
-    #     obj_name_list.append(obj_name)
-    #     # print(obj_name, material)
 
-    print('material_list:', material_list)
-    # args.material = material_list
+    mask_list = []
+    text_labels_list = []
+    
+    if not debug:
+        for camera_index in camera_indices:
+            segmentation_results, detection_results = init_parser.segment_gdino(
+                obj_list=obj_list,
+                camera_index=camera_index,
+            )
+            masks, _, text_labels = segmentation_results
+            # _, _, labels = detection_results
 
-    # segmentation_results: aggregated masks, text labels
-    # detection_results: boxes, scores, labels
-    segmentation_results, detection_results = init_parser.segment_gdino(
-        texts='|'.join([','.join(obj_name_list), ','.join(material_list)])
-    )
+            for i in range(masks.shape[0]):
+                mask = masks[i].detach().cpu().numpy()
+                mask = (mask * 255).astype(np.uint8)
+                cv2.imwrite('vis/multiview-0/mask_{}_{}.png'.format(camera_index, i), mask)
+                with open('vis/multiview-0/text_labels_{}_{}.txt'.format(camera_index, i), 'w') as f:
+                    f.write(text_labels[i])
+            
+            mask_list.append(masks)
+            text_labels_list.append(text_labels)
 
-    # args.material = 'granular'
-    args.material = 'rigid'  # TODO ONLY FOR DEBUGGING
+    else:
+        for camera_index in camera_indices:
+            masks = []
+            text_labels = []
+            mask_dirs = glob.glob('vis/multiview-0/mask_{}*.png'.format(camera_index))
+            for i in range(len(mask_dirs)):
+                mask = cv2.imread('vis/multiview-0/mask_{}_{}.png'.format(camera_index, i))
+                mask = (mask > 0)[..., 0]  # (H, W) boolean
+                masks.append(mask)
+                with open('vis/multiview-0/text_labels_{}_{}.txt'.format(camera_index, i), 'r') as f:
+                    text_labels.append(f.read())
+            masks = np.stack(masks, axis=0)
+
+            mask_list.append(masks)
+            text_labels_list.append(text_labels)
+
     ### LLM START ### set_initial_args
     ### LLM END ###
+    args.material = 'rigid'  # TODO only for debugging
 
     # set gnn model
     model = Model(args)
@@ -195,51 +221,55 @@ def build_graph(args):
         ### LLM END ###
 
     # set dataset
-    if args.material == 'rigid':
-        screenWidth = 720
-        screenHeight = 720
-        headless = True
-        pyflex.set_screenWidth(screenWidth)
-        pyflex.set_screenHeight(screenHeight)
-        pyflex.set_light_dir(np.array([0.1, 2.0, 0.1]))
-        pyflex.set_light_fov(70.)
-        pyflex.init(headless)
+    screenWidth = 720
+    screenHeight = 720
+    headless = True
+    pyflex.set_screenWidth(screenWidth)
+    pyflex.set_screenHeight(screenHeight)
+    pyflex.set_light_dir(np.array([0.1, 2.0, 0.1]))
+    pyflex.set_light_fov(70.)
+    pyflex.init(headless)
 
-        cam_idx = 0
-        rad = np.deg2rad(cam_idx * 20.)
-        global_scale = 24
-        cam_dis = 0.0 * global_scale / 8.0
-        cam_height = 6.0 * global_scale / 8.0
-        camPos = np.array([np.sin(rad) * cam_dis, cam_height, np.cos(rad) * cam_dis])
-        camAngle = np.array([rad, -np.deg2rad(90.), 0.])
-        pyflex.set_camPos(camPos)
-        pyflex.set_camAngle(camAngle)
+    pyflex_cams = False
+    if pyflex_cams:
+        cam_params_list = []
+        cam_extrinsics_list = []
+        for cam_idx in camera_indices:
+            rad = np.deg2rad(cam_idx * 20.)
+            global_scale = 24
+            cam_dis = 0.0 * global_scale / 8.0
+            cam_height = 6.0 * global_scale / 8.0
+            camPos = np.array([np.sin(rad) * cam_dis, cam_height, np.cos(rad) * cam_dis])
+            camAngle = np.array([rad, -np.deg2rad(90.), 0.])
+            pyflex.set_camPos(camPos)
+            pyflex.set_camAngle(camAngle)
 
-        projMat = pyflex.get_projMatrix().reshape(4, 4).T
-        cx = screenWidth / 2.0
-        cy = screenHeight / 2.0
-        fx = projMat[0, 0] * cx
-        fy = projMat[1, 1] * cy
-        cam_params =  [fx, fy, cx, cy]
+            projMat = pyflex.get_projMatrix().reshape(4, 4).T
+            cx = screenWidth / 2.0
+            cy = screenHeight / 2.0
+            fx = projMat[0, 0] * cx
+            fy = projMat[1, 1] * cy
+            cam_params =  [fx, fy, cx, cy]
 
-        cam_extrinsics = np.array(pyflex.get_viewMatrix()).reshape(4, 4).T
-        cam = [cam_params, cam_extrinsics]
-
-        # if single_material:
-        data = MultiviewParticleDataset(
-            args=args,
-            segmentation=segmentation_results,
-            detection=detection_results,
-            cam=cam,
-            material=material_list
-        )
-
-        # with open(action_dir, 'rb') as fp:
-        #     actions = pickle.load(fp)
-    else:
-        raise NotImplementedError
+            cam_extrinsics = np.array(pyflex.get_viewMatrix()).reshape(4, 4).T
+            cam_params_list.append(cam_params)
+            cam_extrinsics_list.append(cam_extrinsics)
+        cam_list = (cam_params_list, cam_extrinsics_list)
     
-    # import ipdb; ipdb.set_trace()
+    else:  # init_parser cam_list
+        cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
+
+    data = MultiviewParticleDataset(
+        args=args,
+        depths=init_parser.depth_imgs,
+        masks=mask_list,
+        cams=cam_list,
+        text_labels_list=text_labels_list,
+        material_dict=material_dict,
+    )
+
+
+    import ipdb; ipdb.set_trace()
 
     for _ in range(1):
         
@@ -437,5 +467,5 @@ def plt_render(particles_set, n_particle, render_path):
 
 if __name__ == '__main__':
     args = gen_args()
-    rollout(args)
+    build_graph(args)
 
