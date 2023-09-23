@@ -45,6 +45,7 @@ echo '' >> ~/.bashrc
 source ~/.bashrc
 source $CONDA_BASE/etc/profile.d/conda.sh
 conda activate $CURR_CONDA
+cd ..
 
 ## download weights
 cd src
