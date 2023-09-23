@@ -20,4 +20,5 @@ bitsandbytes
 dgl
 pyflex
 omegaconf
+gdown
 git+https://github.com/facebookresearch/segment-anything.git

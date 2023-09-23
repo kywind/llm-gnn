@@ -108,7 +108,7 @@ class Dataparser:
         for box, score, label in zip(boxes, scores, labels):
             box = [round(i, 2) for i in box.tolist()]
             print(f"Detected {captions[label.item()]} with confidence {round(score.item(), 3)} at location {box}")
-        return boxes, scores, labels
+        return boxes, scores, labels, logits
 
     def segment_gdino(self, texts):
         device = self.device
@@ -116,7 +116,7 @@ class Dataparser:
         obj_list = obj_raw.split(',')
         text_prompts = [f"{obj}" for obj in obj_list]
         print('segment prompt:', text_prompts)  # things like: ['apple', 'banana', 'orange']
-        boxes, scores, labels = self.detect_gdino(text_prompts, box_thresholds=0.5)
+        boxes, scores, labels, logits = self.detect_gdino(text_prompts, box_thresholds=0.5)
 
         image = np.array(self.image)
         H, W = image.shape[:2]
