@@ -32,7 +32,6 @@ def build_graph(args):
     camera_indices = [0, 1, 2, 3]
     data_dir = "../data/2023-09-13-15-19-50-765863/"
     vis_dir = "vis/multiview-0/"
-    debug = True
 
     cam_dir = data_dir + "camera_0/color"
 
@@ -41,7 +40,8 @@ def build_graph(args):
     # initial dataparser
     init_parser = MultiviewDataparser(args, data_dir)
 
-    if not debug:
+    debug_query = True
+    if not debug_query:
         llm = LLM(args)
         init_parser.prepare_query_model()
 
@@ -110,8 +110,9 @@ def build_graph(args):
 
     mask_list = []
     text_labels_list = []
-    
-    if not debug:
+
+    debug_segment = True
+    if not debug_segment:
         for camera_index in camera_indices:
             segmentation_results, detection_results = init_parser.segment_gdino(
                 obj_list=obj_list,
@@ -120,9 +121,9 @@ def build_graph(args):
             masks, _, text_labels = segmentation_results
             # _, _, labels = detection_results
 
+            masks = masks.detach().cpu().numpy()  # (n_detect, H, W) boolean            
             for i in range(masks.shape[0]):
-                mask = masks[i].detach().cpu().numpy()
-                mask = (mask * 255).astype(np.uint8)
+                mask = (masks[i] * 255).astype(np.uint8)
                 cv2.imwrite('vis/multiview-0/mask_{}_{}.png'.format(camera_index, i), mask)
                 with open('vis/multiview-0/text_labels_{}_{}.txt'.format(camera_index, i), 'w') as f:
                     f.write(text_labels[i])
