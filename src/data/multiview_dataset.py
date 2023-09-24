@@ -52,6 +52,7 @@ class MultiviewParticleDataset:
                     "vis/multiview-0/pcd_{}_{}.pcd".format(camera_index, pcd_index), pcd_o3d)
         
         global_pcd_list, global_label_list, global_id_list = self.pcd_grouping(pcd_list_all)
+        # global_pcd_list = self.remove_outliers_grouping(global_pcd_list)
         self.save_global_pcd(global_pcd_list, global_label_list, global_id_list, pcd_rgb_list_all)
     
     def remove_outliers(self, pcd_list_all, pcd_rgb_list_all):
@@ -66,9 +67,67 @@ class MultiviewParticleDataset:
                 total_pcd.append(pcd)
         total_pcd = np.vstack(total_pcd)
 
-        # TODO RANSAC to get the plane
+        # RANSAC to get the plane
+        n_ransac_sample = 8
+        n_ransac_iter = 100
+        dist_thres = 0.3
+        for i in range(n_ransac_iter):
+            indices = np.random.choice(total_pcd.shape[0], n_ransac_sample, replace=False)
+            pcd_ransac = total_pcd[indices]
+            norm, intercept = self.compute_plane(pcd_ransac)
+            dist = np.abs(np.matmul(total_pcd, norm) - intercept)  # distance to the plane
+            inliers = total_pcd[dist < dist_thres]
+            if inliers.shape[0] / total_pcd.shape[0] > 0.98:
+                break
+        else:
+            raise AssertionError("RANSAC failed")
+        
+        # remove outliers
+        for i in range(self.n_cameras):
+            pcd_list = pcd_list_all[i]
+            pcd_rgb_list = pcd_rgb_list_all[i]
+            for j in range(len(pcd_list)):
+                pcd = pcd_list[j]
+                if pcd is None:
+                    continue
+                dist = np.abs(np.matmul(pcd, norm) - intercept)
+                pcd_list[j] = pcd[dist < dist_thres]
+                pcd_rgb_list[j] = pcd_rgb_list[j][dist < dist_thres]
+
         return pcd_list_all, pcd_rgb_list_all
 
+    def remove_outliers_grouping(self, global_pcd_list):  # too slow and memory-consuming, not used
+        # remove points with chamfer distance larger than threshold
+        chamfer_dist_thres = 0.01
+        for i in range(len(global_pcd_list)):
+            obj_pcd_list = global_pcd_list[i]
+            for j in range(len(obj_pcd_list)):
+                valid_k = [k for k in range(len(obj_pcd_list)) if k != j and obj_pcd_list[k] is not None]
+                if len(valid_k) < 3: continue  # only filter object if there are enough views
+                min_dist = 100000
+                for k in valid_k:
+                    min_dist = np.minimum(
+                        np.min(
+                            np.sum((obj_pcd_list[j][:, None] - obj_pcd_list[k][None]) ** 2, dim=-1), 
+                            dim=1)[0],
+                        min_dist)
+                obj_pcd_list[j] = obj_pcd_list[j][min_dist < chamfer_dist_thres]
+        return global_pcd_list
+
+    def compute_plane(self, pcd):
+        # pcd: [n, 3]
+        # apply PCA to get the normal of the plane and the distance to the origin
+        n = pcd.shape[0]
+        pcd_mean = np.mean(pcd, axis=0)
+        pcd_centered = pcd - pcd_mean
+        cov = np.matmul(pcd_centered.T, pcd_centered) / n
+        eig_val, eig_vec = np.linalg.eig(cov)
+        eig_vec = eig_vec[:, np.argmin(eig_val)]
+        eig_vec = eig_vec / np.linalg.norm(eig_vec)
+
+        # calculate the distance to the origin
+        dist = np.matmul(pcd_mean, eig_vec)
+        return eig_vec, dist
 
     def pcd_grouping(self, pcd_list_all):
         global_pcd_list = []  # num_objects * num_cameras * (num_points, 3)
