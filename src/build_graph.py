@@ -13,6 +13,8 @@ from data.multiview_dataset import MultiviewParticleDataset
 from llm.llm import LLM
 import pyflex
 import pickle
+import open3d as o3d
+import copy
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -61,7 +63,7 @@ def build_graph(args):
 
         init_parser.del_query_model()
     else:
-        obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat', 'tabletop']
+        obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
 
     # obj_prompt = " ".join([
     #     "What are the individual objects mentioned in the query?",
@@ -263,11 +265,11 @@ def build_graph(args):
         args=args,
         depths=init_parser.depth_imgs,
         masks=mask_list,
+        rgbs=init_parser.rgb_imgs,
         cams=cam_list,
         text_labels_list=text_labels_list,
         material_dict=material_dict,
     )
-
 
     import ipdb; ipdb.set_trace()
 

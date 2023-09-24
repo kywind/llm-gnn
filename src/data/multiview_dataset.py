@@ -4,16 +4,18 @@ import numpy as np
 import cv2
 import torch
 from PIL import Image
+import open3d as o3d
 
 from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
         opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
 
 class MultiviewParticleDataset:
-    def __init__(self, args, depths=None, masks=None, cams=None, 
+    def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, 
             text_labels_list=None, material_dict=None):
         self.args = args
         self.depths = depths  # list of PIL depth images
         self.masks = masks  # list of masks
+        self.rgbs = rgbs  # list of PIL rgb images
         self.cam_params, self.cam_extrinsics = cams  # (4,) * n_cameras, (4, 4) * n_cameras
         self.text_labels = text_labels_list  # list of text labels
         self.material_dict = material_dict  # dict of {obj_name: material_name}
@@ -25,48 +27,173 @@ class MultiviewParticleDataset:
 
         self.n_cameras = len(self.depths)
 
+        pcd_list_all = []
+        pcd_rgb_list_all = []
         for camera_index in range(self.n_cameras):
             depth = np.array(self.depths[camera_index])
+            depth = depth * 0.001
+            rgb = np.array(self.rgbs[camera_index]) / 255.0
             masks = np.array(self.masks[camera_index])
             cam_param = self.cam_params[camera_index]
             cam_extrinsic = self.cam_extrinsics[camera_index]
-            pcd_list = self.parse_pcd(depth, masks, cam_param, cam_extrinsic)
-            import ipdb; ipdb.set_trace()
+            pcd_list, pcd_rgb_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
+            pcd_list_all.append(pcd_list)
+            pcd_rgb_list_all.append(pcd_rgb_list)
+        
+        pcd_list_all, pcd_rgb_list_all = self.remove_outliers(pcd_list_all, pcd_rgb_list_all)
+        
+        for camera_index in range(self.n_cameras):
+            for pcd_index in range(len(pcd_list_all[camera_index])):
+                pcd = pcd_list_all[camera_index][pcd_index]
+                pcd_o3d = o3d.geometry.PointCloud()
+                pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
+                pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_rgb_list_all[camera_index][pcd_index])
+                o3d.io.write_point_cloud(
+                    "vis/multiview-0/pcd_{}_{}.pcd".format(camera_index, pcd_index), pcd_o3d)
+        
+        global_pcd_list, global_label_list, global_id_list = self.pcd_grouping(pcd_list_all)
+        self.save_global_pcd(global_pcd_list, global_label_list, global_id_list, pcd_rgb_list_all)
+    
+    def remove_outliers(self, pcd_list_all, pcd_rgb_list_all):
+        total_pcd = []
+        # total_rgb = []
+        for i in range(self.n_cameras):
+            pcd_list = pcd_list_all[i]
+            for j in range(len(pcd_list)):
+                pcd = pcd_list[j]
+                if pcd is None:
+                    continue
+                total_pcd.append(pcd)
+        total_pcd = np.vstack(total_pcd)
 
-        pcd_label_list = np.unique(self.pcd_label)
-        self.n_instance = pcd_label_list.shape[0]
-        pcd_sample_list = []
-        # particle_num_list = []
-        particle_r_list = []
-        particle_den_list = []
-        for i in range(pcd_label_list.shape[0]):
-            # particle_num_i = int((self.pcd_label == i).sum())
-            pcd_i = self.pcd[self.pcd_label[:, 0] == i]
-            pcd_sample_i, _, particle_r_i, particle_den_i = self.subsample(pcd_i, particle_num=self.particle_num)
-            pcd_sample_list.append(pcd_sample_i)
-            # particle_num_list.append(particle_num_i)
-            particle_r_list.append(particle_r_i)
-            particle_den_list.append(particle_den_i)
+        # TODO RANSAC to get the plane
+        return pcd_list_all, pcd_rgb_list_all
 
-        # TODO check if taking mean is good
-        self.particle_r = np.array(particle_r_list).mean()
-        self.particle_den = np.array(particle_den_list).mean()
 
-        pcd_sample = np.vstack(pcd_sample_list)
+    def pcd_grouping(self, pcd_list_all):
+        global_pcd_list = []  # num_objects * num_cameras * (num_points, 3)
+        global_id_list = []  # num_objects * num_cameras * [i, j]
+        global_label_list = []  # num_objects
 
-        self.attrs = np.zeros((self.particle_num * self.n_instance, args.attr_dim), dtype=pcd_sample.dtype) # [particle_num, attr_dim]
-        self.state = pcd_sample
-        self.action = None
-        self.Rr = None
-        self.Rs = None
-        self.history_states = []
+        for i in range(self.n_cameras):
+            pcd_list = pcd_list_all[i]
+            picked_k = []  # store the index of already merged objects in this view
+            for j in range(len(pcd_list)):
+                pcd = pcd_list[j]
+
+                # check whether pcd belongs to an object
+                dist_list = []  # store distance between pcd and each existing object
+                for k in range(len(global_pcd_list)): 
+                    if k in picked_k:  # already merged
+                        dist_list.append(100000)
+                        continue
+                    obj_pcd_list = global_pcd_list[k]  # the objects' point cloud list
+                    view_dist_list = []  # store distance between pcd and each view of the object
+                    for l in range(len(obj_pcd_list)):
+                        obj_pcd = obj_pcd_list[l]  # the view's point cloud
+                        if obj_pcd is None: # if no point cloud in this view
+                            continue
+
+                        # calculate distance between pcd and obj_pcd using mean distance
+                        obj_pcd_mean = np.mean(obj_pcd, axis=0)
+                        pcd_mean = np.mean(pcd, axis=0)
+                        dist = np.linalg.norm(obj_pcd_mean - pcd_mean)
+                        view_dist_list.append(dist)
+                    assert len(view_dist_list) > 0
+
+                    view_dist_list = np.array(view_dist_list)
+                    dist_list.append(np.mean(view_dist_list))  # mean distance over views
+
+                dist_list = np.array(dist_list)                
+                # import ipdb; ipdb.set_trace()
+
+                # merge objects by distance threshold
+                if len(dist_list) == 0 or np.min(dist_list) > 100:
+                    global_pcd_list.append([])  # new object
+                    global_pcd_list[-1].extend([None] * i)  # fill to same length
+                    global_pcd_list[-1].extend([pcd])
+
+                    global_id_list.append([])  # new object
+                    global_id_list[-1].extend([None] * i)  # fill to same length
+                    global_id_list[-1].extend([(i, j)])
+                    
+                    # store the id of the new object
+                    global_label_list.append(self.text_labels[i][j])
+                    picked_k.append(len(global_pcd_list) - 1)
+
+                else:
+                    min_dist_index = np.argmin(dist_list)  # closest object's index
+
+                    # check if id match
+                    text_label = self.text_labels[i][j]
+                    min_dist_text_label = global_label_list[min_dist_index]
+
+                    if text_label == min_dist_text_label:
+                        global_pcd_list[min_dist_index].append(pcd)
+                        global_id_list[min_dist_index].append((i, j))
+                        picked_k.append(min_dist_index)
+                    else:
+                        global_pcd_list.append([])  # new object
+                        global_pcd_list[-1].extend([None] * i)  # fill to same length
+                        global_pcd_list[-1].extend([pcd])
+
+                        global_id_list.append([])  # new object
+                        global_id_list[-1].extend([None] * i)  # fill to same length
+                        global_id_list[-1].extend([(i, j)])
+
+                        # store the id of the new object
+                        global_label_list.append(self.text_labels[i][j])
+                        picked_k.append(len(global_pcd_list) - 1)
+
+            # fill to same length
+            for m in range(len(global_pcd_list)):
+                global_pcd_list[m].extend([None] * (i + 1 - len(global_pcd_list[m])))
+                global_id_list[m].extend([None] * (i + 1 - len(global_id_list[m])))
+
+        # import ipdb; ipdb.set_trace()
+        return global_pcd_list, global_label_list, global_id_list
+
+    def save_global_pcd(self, global_pcd_list, global_label_list, id_list, rgb_list):
+        # concat each pcd that blongs to the same object
+        n_obj = len(global_pcd_list)
+        global_pcd = np.zeros((0, 3))
+        global_rgb = np.zeros((0, 3))
+        for i in range(n_obj):
+            obj_pcd_list = global_pcd_list[i]
+            obj_pcd = np.zeros((0, 3))
+            obj_color = np.zeros((0, 3))
+            for j in range(len(obj_pcd_list)):
+                if obj_pcd_list[j] is None:
+                    continue
+                obj_pcd = np.vstack((obj_pcd, obj_pcd_list[j]))
+                obj_color = np.vstack((obj_color, rgb_list[id_list[i][j][0]][id_list[i][j][1]]))
+            global_pcd = np.vstack((global_pcd, obj_pcd))
+            global_rgb = np.vstack((global_rgb, obj_color))
+            obj_pcd_o3d = o3d.geometry.PointCloud()
+            obj_pcd_o3d.points = o3d.utility.Vector3dVector(obj_pcd)
+            obj_pcd_o3d.colors = o3d.utility.Vector3dVector(obj_color)
+            o3d.io.write_point_cloud(
+                "vis/multiview-0/obj_{}.pcd".format(i), obj_pcd_o3d)
+
+            # save object text label
+            with open("vis/multiview-0/obj_label_{}.txt".format(i), "w") as f:
+                f.write(global_label_list[i])
+
+        # save global pcd
+        global_pcd_o3d = o3d.geometry.PointCloud()
+        global_pcd_o3d.points = o3d.utility.Vector3dVector(global_pcd)
+        global_pcd_o3d.colors = o3d.utility.Vector3dVector(global_rgb)
+        o3d.io.write_point_cloud(
+            "vis/multiview-0/global_pcd.pcd", global_pcd_o3d)
+        print("saved {} objects".format(n_obj))
 
     def update(self, state):
         self.history_states.append(self.state.copy())
         self.state = state
 
-    def parse_pcd(self, depth, masks, cam_param, cam_extrinsic):
+    def parse_pcd(self, depth, masks, rgb, cam_param, cam_extrinsic):
         pcd_list = []
+        pcd_rgb_list = []
         for i in range(masks.shape[0]):
             mask = masks[i]
             mask = np.logical_and(mask, depth > 0)
@@ -82,12 +209,19 @@ class MultiviewParticleDataset:
             fgpcd[:, 1] = (pos_y - cy) * depth[mask] / fy
             fgpcd[:, 2] = depth[mask]
 
+            # add rgb color
+            fgpcd_color = np.zeros((mask.sum(), 3))
+            fgpcd_color[:, 0] = rgb[:, :, 0][mask]
+            fgpcd_color[:, 1] = rgb[:, :, 1][mask]
+            fgpcd_color[:, 2] = rgb[:, :, 2][mask]
+
             # to world frame
             fgpcd = np.hstack((fgpcd, np.ones((fgpcd.shape[0], 1))))
             fgpcd = np.matmul(fgpcd, np.linalg.inv(cam_extrinsic).T)[:, :3]
 
             pcd_list.append(fgpcd)
-        return pcd_list
+            pcd_rgb_list.append(fgpcd_color)
+        return pcd_list, pcd_rgb_list
 
     def get_grouping(self):
         n_instance = np.unique(self.pcd_label).shape[0]
