@@ -224,17 +224,17 @@ def build_graph(args):
         ### LLM END ###
 
     # set dataset
-    screenWidth = 720
-    screenHeight = 720
-    headless = True
-    pyflex.set_screenWidth(screenWidth)
-    pyflex.set_screenHeight(screenHeight)
-    pyflex.set_light_dir(np.array([0.1, 2.0, 0.1]))
-    pyflex.set_light_fov(70.)
-    pyflex.init(headless)
-
     pyflex_cams = False
     if pyflex_cams:
+        screenWidth = 720
+        screenHeight = 720
+        headless = True
+        pyflex.set_screenWidth(screenWidth)
+        pyflex.set_screenHeight(screenHeight)
+        pyflex.set_light_dir(np.array([0.1, 2.0, 0.1]))
+        pyflex.set_light_fov(70.)
+        pyflex.init(headless)
+
         cam_params_list = []
         cam_extrinsics_list = []
         for cam_idx in camera_indices:
@@ -270,6 +270,8 @@ def build_graph(args):
         cams=cam_list,
         text_labels_list=text_labels_list,
         material_dict=material_dict,
+        visualize=True,
+        verbose=False,
     )
 
     import ipdb; ipdb.set_trace()

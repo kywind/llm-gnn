@@ -9,9 +9,11 @@ import open3d as o3d
 from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
         opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
 
+from visualize import visualize_o3d
+
 class MultiviewParticleDataset:
     def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, 
-            text_labels_list=None, material_dict=None):
+            text_labels_list=None, material_dict=None, visualize=False, verbose=False):
         self.args = args
         self.depths = depths  # list of PIL depth images
         self.masks = masks  # list of masks
@@ -20,13 +22,40 @@ class MultiviewParticleDataset:
         self.text_labels = text_labels_list  # list of text labels
         self.material_dict = material_dict  # dict of {obj_name: material_name}
 
-        self.global_scale = 24
-        self.depth_thres = 0.599 / 0.8
-        self.particle_num = 50
-        self.adj_thresh = 0.1
+        # self.global_scale = 24
+        # self.depth_thres = 0.599 / 0.8
+        # self.particle_num = 50
+        # self.adj_thresh = 0.1
+        self.visualize = visualize
+        self.verbose = verbose
 
         self.n_cameras = len(self.depths)
 
+        # change coordinates to world frame
+        pcd_list_all, pcd_rgb_list_all = self.depth_to_pcd()
+
+        # remove outliers based on table plane (RANSAC)
+        pcd_list_all, pcd_rgb_list_all = self.remove_outliers(pcd_list_all, pcd_rgb_list_all)
+
+        # find corresponding objects in different views
+        global_pcd_list, global_label_list, global_id_list = self.pcd_grouping(pcd_list_all)
+
+        # merge objects from different views
+        objs = self.merge_views(global_pcd_list, global_id_list, pcd_rgb_list_all)
+
+        save_pcd = True
+        if save_pcd:
+            self.save_view_pcd(pcd_list_all, pcd_rgb_list_all)
+            self.save_global_pcd(objs, global_label_list)
+        
+        self.objs = objs
+        self.labels = global_label_list
+        
+        # mesh reconstruction
+        self.mesh_reconstruction()
+
+
+    def depth_to_pcd(self):
         pcd_list_all = []
         pcd_rgb_list_all = []
         for camera_index in range(self.n_cameras):
@@ -39,21 +68,7 @@ class MultiviewParticleDataset:
             pcd_list, pcd_rgb_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
             pcd_list_all.append(pcd_list)
             pcd_rgb_list_all.append(pcd_rgb_list)
-        
-        pcd_list_all, pcd_rgb_list_all = self.remove_outliers(pcd_list_all, pcd_rgb_list_all)
-        
-        for camera_index in range(self.n_cameras):
-            for pcd_index in range(len(pcd_list_all[camera_index])):
-                pcd = pcd_list_all[camera_index][pcd_index]
-                pcd_o3d = o3d.geometry.PointCloud()
-                pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
-                pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_rgb_list_all[camera_index][pcd_index])
-                o3d.io.write_point_cloud(
-                    "vis/multiview-0/pcd_{}_{}.pcd".format(camera_index, pcd_index), pcd_o3d)
-        
-        global_pcd_list, global_label_list, global_id_list = self.pcd_grouping(pcd_list_all)
-        # global_pcd_list = self.remove_outliers_grouping(global_pcd_list)
-        self.save_global_pcd(global_pcd_list, global_label_list, global_id_list, pcd_rgb_list_all)
+        return pcd_list_all, pcd_rgb_list_all
     
     def remove_outliers(self, pcd_list_all, pcd_rgb_list_all):
         total_pcd = []
@@ -96,23 +111,79 @@ class MultiviewParticleDataset:
 
         return pcd_list_all, pcd_rgb_list_all
 
-    def remove_outliers_grouping(self, global_pcd_list):  # too slow and memory-consuming, not used
-        # remove points with chamfer distance larger than threshold
-        chamfer_dist_thres = 0.01
+    def merge_views(self, global_pcd_list, id_list, rgb_list):  
+        ## remove points with chamfer distance larger than threshold; too slow and memory-consuming, not used
+        # chamfer_dist_thres = 0.01
+        # for i in range(len(global_pcd_list)):
+        #     obj_pcd_list = global_pcd_list[i]
+        #     for j in range(len(obj_pcd_list)):
+        #         valid_k = [k for k in range(len(obj_pcd_list)) if k != j and obj_pcd_list[k] is not None]
+        #         if len(valid_k) < 3: continue  # only filter object if there are enough views
+        #         min_dist = 100000
+        #         for k in valid_k:
+        #             min_dist = np.minimum(
+        #                 np.min(
+        #                     np.sum((obj_pcd_list[j][:, None] - obj_pcd_list[k][None]) ** 2, dim=-1), 
+        #                     dim=1)[0],
+        #                 min_dist)
+        #         obj_pcd_list[j] = obj_pcd_list[j][min_dist < chamfer_dist_thres]
+
+        ## using open3d remove statistical outliers
+        objs = []
         for i in range(len(global_pcd_list)):
             obj_pcd_list = global_pcd_list[i]
+            obj_pcd_list = [obj_pcd for obj_pcd in obj_pcd_list if obj_pcd is not None]
+            obj_all_pcd = np.vstack(obj_pcd_list)
+
+            # stack colors
+            obj_color = np.zeros((0, 3))
             for j in range(len(obj_pcd_list)):
-                valid_k = [k for k in range(len(obj_pcd_list)) if k != j and obj_pcd_list[k] is not None]
-                if len(valid_k) < 3: continue  # only filter object if there are enough views
-                min_dist = 100000
-                for k in valid_k:
-                    min_dist = np.minimum(
-                        np.min(
-                            np.sum((obj_pcd_list[j][:, None] - obj_pcd_list[k][None]) ** 2, dim=-1), 
-                            dim=1)[0],
-                        min_dist)
-                obj_pcd_list[j] = obj_pcd_list[j][min_dist < chamfer_dist_thres]
-        return global_pcd_list
+                obj_color = np.vstack((obj_color, rgb_list[id_list[i][j][0]][id_list[i][j][1]]))
+
+            obj = o3d.geometry.PointCloud()
+            obj.points = o3d.utility.Vector3dVector(obj_all_pcd)
+            obj.colors = o3d.utility.Vector3dVector(obj_color)
+
+            outliers = None
+            new_outlier = None
+            # remove until there's no new outlier
+            rm_iter = 0
+            # if True:
+            while new_outlier is None or len(new_outlier.points) > 0:
+                _, inlier_idx = obj.remove_statistical_outlier(
+                    nb_neighbors=100, std_ratio=1.5+0.5*rm_iter
+                )
+
+                # filter original pcd list
+                # obj_pcd_length_list = [obj_pcd.shape[0] for obj_pcd in obj_pcd_list]
+                # assert len(obj.points) == np.sum(np.array(obj_pcd_length_list))
+                # for j in range(len(obj_pcd_list)):
+                #     if obj_pcd_list[j] is None:
+                #         continue
+                #     inlier_idx_aligned = inlier_idx - np.sum(np.array(obj_pcd_length_list)[:j])
+                #     inlier_j_idx = np.intersect1d(inlier_idx_aligned, np.arange(obj_pcd_length_list[j]))
+                #     obj_pcd_list[j] = obj_pcd_list[j][inlier_j_idx]
+
+                new_obj = obj.select_by_index(inlier_idx)
+                new_outlier = obj.select_by_index(inlier_idx, invert=True)
+                if outliers is None:
+                    outliers = new_outlier
+                else:
+                    outliers += new_outlier
+                obj = new_obj
+                rm_iter += 1
+                if self.verbose:
+                    print("object {}, iter {}, removed {} outliers".format(i, rm_iter, len(new_outlier.points)))
+
+            # global_pcd_list[i] = obj_pcd_list
+            objs.append(obj)
+        
+            if self.visualize:
+                outliers.paint_uniform_color([0.0, 0.8, 0.0])
+                visualize_o3d([obj, outliers], title="obj_{} and outliers".format(i))
+
+        # return global_pcd_list
+        return objs  # no need to separate views
 
     def compute_plane(self, pcd):
         # pcd: [n, 3]
@@ -212,27 +283,27 @@ class MultiviewParticleDataset:
         # import ipdb; ipdb.set_trace()
         return global_pcd_list, global_label_list, global_id_list
 
-    def save_global_pcd(self, global_pcd_list, global_label_list, id_list, rgb_list):
+    def save_view_pcd(self, pcd_list_all, pcd_rgb_list_all):
+        for camera_index in range(self.n_cameras):
+            for pcd_index in range(len(pcd_list_all[camera_index])):
+                pcd = pcd_list_all[camera_index][pcd_index]
+                pcd_o3d = o3d.geometry.PointCloud()
+                pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
+                pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_rgb_list_all[camera_index][pcd_index])
+                o3d.io.write_point_cloud(
+                    "vis/multiview-0/pcd_{}_{}.pcd".format(camera_index, pcd_index), pcd_o3d)
+                # if self.visualize:
+                #     visualize_o3d([pcd_o3d], title="pcd_{}_{}".format(camera_index, pcd_index))
+
+    def save_global_pcd(self, objs, global_label_list):
         # concat each pcd that blongs to the same object
-        n_obj = len(global_pcd_list)
-        global_pcd = np.zeros((0, 3))
-        global_rgb = np.zeros((0, 3))
+        n_obj = len(objs)
         for i in range(n_obj):
-            obj_pcd_list = global_pcd_list[i]
-            obj_pcd = np.zeros((0, 3))
-            obj_color = np.zeros((0, 3))
-            for j in range(len(obj_pcd_list)):
-                if obj_pcd_list[j] is None:
-                    continue
-                obj_pcd = np.vstack((obj_pcd, obj_pcd_list[j]))
-                obj_color = np.vstack((obj_color, rgb_list[id_list[i][j][0]][id_list[i][j][1]]))
-            global_pcd = np.vstack((global_pcd, obj_pcd))
-            global_rgb = np.vstack((global_rgb, obj_color))
-            obj_pcd_o3d = o3d.geometry.PointCloud()
-            obj_pcd_o3d.points = o3d.utility.Vector3dVector(obj_pcd)
-            obj_pcd_o3d.colors = o3d.utility.Vector3dVector(obj_color)
+            obj = objs[i]
             o3d.io.write_point_cloud(
-                "vis/multiview-0/obj_{}.pcd".format(i), obj_pcd_o3d)
+                "vis/multiview-0/obj_{}.pcd".format(i), obj)
+            if self.visualize:
+                visualize_o3d([obj], title="obj_{} ({})".format(i, global_label_list[i]))
 
             # save object text label
             with open("vis/multiview-0/obj_label_{}.txt".format(i), "w") as f:
@@ -240,15 +311,15 @@ class MultiviewParticleDataset:
 
         # save global pcd
         global_pcd_o3d = o3d.geometry.PointCloud()
-        global_pcd_o3d.points = o3d.utility.Vector3dVector(global_pcd)
-        global_pcd_o3d.colors = o3d.utility.Vector3dVector(global_rgb)
+        for i in range(n_obj):
+            obj = objs[i]
+            if obj is None: continue
+            global_pcd_o3d += obj
         o3d.io.write_point_cloud(
             "vis/multiview-0/global_pcd.pcd", global_pcd_o3d)
+        if self.visualize:
+            visualize_o3d([global_pcd_o3d], title="global_pcd_o3d")
         print("saved {} objects".format(n_obj))
-
-    def update(self, state):
-        self.history_states.append(self.state.copy())
-        self.state = state
 
     def parse_pcd(self, depth, masks, rgb, cam_param, cam_extrinsic):
         pcd_list = []
@@ -281,6 +352,31 @@ class MultiviewParticleDataset:
             pcd_list.append(fgpcd)
             pcd_rgb_list.append(fgpcd_color)
         return pcd_list, pcd_rgb_list
+
+    def mesh_reconstruction(self):
+        # convert pcd to mesh with alpha shape
+        alpha = 0.15
+        all_meshes = []
+        for i in range(len(self.objs)):
+            obj = self.objs[i]
+            if obj is None: continue
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(
+                obj, alpha)
+            mesh.compute_vertex_normals()
+            mesh.compute_triangle_normals()
+            o3d.io.write_triangle_mesh(
+                "vis/multiview-0/obj_{}.ply".format(i), mesh)
+            all_meshes.append(mesh)
+            if self.visualize:
+                visualize_o3d([mesh], title="mesh_{}".format(i))
+        if self.visualize:
+            visualize_o3d(all_meshes, title="all_meshes")
+
+    ### legacy functions ###
+
+    def update(self, state):
+        self.history_states.append(self.state.copy())
+        self.state = state
 
     def get_grouping(self):
         n_instance = np.unique(self.pcd_label).shape[0]
