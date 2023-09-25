@@ -2,6 +2,8 @@ import glob
 import numpy as np
 import os
 import torch
+import torchvision
+import torchvision.transforms as transforms
 
 from config import gen_args
 from gnn.model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
@@ -29,39 +31,103 @@ def build_graph(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    camera_indices = [0, 1, 2, 3]
-    data_dir = "../data/2023-09-13-15-19-50-765863/"
-    vis_dir = "vis/multiview-0/"
+    ## configs
+    visualize = False
+    verbose = False
+    blip_query = False
+    ram_query = False
+    skip_segment = True
 
-    cam_dir = data_dir + "camera_0/color"
+    camera_indices = [0, 1, 2, 3]
+
+    data_dir = "../data/2023-09-13-15-19-50-765863/"
+    vis_dir = "vis/multiview-0-debug/"
+    dataset_name = "d3fields"
+
+    # data_dir = "../data/mustard_bottle/"
+    # vis_dir = "vis/multiview-ycb-0/"
+    # dataset_name = "ycb-flex"
 
     os.makedirs(vis_dir, exist_ok=True)
 
     # initial dataparser
-    init_parser = MultiviewDataparser(args, data_dir)
+    init_parser = MultiviewDataparser(args, data_dir, dataset_name)
 
-    debug_query = True
-    if not debug_query:
+    if blip_query:
         llm = LLM(args)
         init_parser.prepare_query_model()
 
         obj_list = []
         for camera_index in camera_indices:
-            query_results = init_parser.query(
-                texts='List all the objects on the table. Answer:',
-                camera_index=camera_index
-            )
-            print(f'index {camera_index}, query_results: {query_results}')
-
-            objs = query_results.rstrip('.').split(',')
-            for obj in objs:
-                obj = obj.strip(' ')
-                obj = obj.lstrip('and')
-                obj = obj.strip(' ')
-                if obj not in obj_list:
-                    obj_list.append(obj)
+            obj_list_view = []
+            for i in range(3):
+                if i == 0:
+                    query_results = init_parser.query(
+                        texts='What objects are on the table? Answer:',
+                        camera_index=camera_index
+                    )
+                else:
+                    existing_objs = ', '.join(obj_list_view)
+                    query_results = init_parser.query(
+                        texts=" ".join([
+                            f"What objects are on the table except {existing_objs}?",
+                            "Answer none if there aren't any.",
+                            "Answer:",
+                        ]),
+                        camera_index=camera_index,
+                    )
+                print(f'index {camera_index}, round {i}, query_results: {query_results}')
+                objs = query_results.rstrip('.').split(',')
+                if objs in [['none'], ['None'], [' none'], [' None']]:
+                    break
+                for obj in objs:
+                    obj = obj.strip(' ')
+                    obj = obj.lstrip('and')
+                    obj = obj.strip(' ')
+                    if obj not in obj_list:
+                        obj_list.append(obj)
+                    if obj not in obj_list_view:
+                        obj_list_view.append(obj)
 
         init_parser.del_query_model()
+        print('After query, obj_list:', obj_list)
+        import ipdb; ipdb.set_trace()
+
+    elif ram_query:
+        from data.ram.model import ram
+        image_size = 384
+        transform = transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+        ram_model = ram(
+            pretrained="weights/ram_swin_large_14m.pth",
+            image_size=image_size,
+            vit="swin_l",
+        )
+        ram_model.eval()
+        ram_model = ram_model.to(device)
+
+        obj_list = []
+        for camera_index in camera_indices:
+            image_pil = init_parser.rgb_imgs[camera_index]
+            raw_image = image_pil.resize((image_size, image_size))
+            raw_image = transform(raw_image).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                tags, _ = ram_model.generate_tag(raw_image)
+                tags = tags[0].split('|')
+                for tag in tags:
+                    tag = tag.strip(' ')
+                    if tag not in obj_list:
+                        obj_list.append(tag)
+                print(f'camera {camera_index}, tags:', tags)
+        print('After query, obj_list:', obj_list)
     else:
         obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
 
@@ -111,8 +177,7 @@ def build_graph(args):
     mask_list = []
     text_labels_list = []
 
-    debug_segment = True
-    if not debug_segment:
+    if not skip_segment:
         for camera_index in camera_indices:
             segmentation_results, detection_results = init_parser.segment_gdino(
                 obj_list=obj_list,
@@ -124,8 +189,8 @@ def build_graph(args):
             masks = masks.detach().cpu().numpy()  # (n_detect, H, W) boolean            
             for i in range(masks.shape[0]):
                 mask = (masks[i] * 255).astype(np.uint8)
-                cv2.imwrite('vis/multiview-0/mask_{}_{}.png'.format(camera_index, i), mask)
-                with open('vis/multiview-0/text_labels_{}_{}.txt'.format(camera_index, i), 'w') as f:
+                cv2.imwrite(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)), mask)
+                with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'w') as f:
                     f.write(text_labels[i])
             
             mask_list.append(masks)
@@ -135,12 +200,12 @@ def build_graph(args):
         for camera_index in camera_indices:
             masks = []
             text_labels = []
-            mask_dirs = glob.glob('vis/multiview-0/mask_{}*.png'.format(camera_index))
+            mask_dirs = glob.glob(os.path.join(vis_dir, 'mask_{}*.png'.format(camera_index)))
             for i in range(len(mask_dirs)):
-                mask = cv2.imread('vis/multiview-0/mask_{}_{}.png'.format(camera_index, i))
+                mask = cv2.imread(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)))
                 mask = (mask > 0)[..., 0]  # (H, W) boolean
                 masks.append(mask)
-                with open('vis/multiview-0/text_labels_{}_{}.txt'.format(camera_index, i), 'r') as f:
+                with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'r') as f:
                     text_labels.append(f.read())
             masks = np.stack(masks, axis=0)
 
@@ -270,8 +335,9 @@ def build_graph(args):
         cams=cam_list,
         text_labels_list=text_labels_list,
         material_dict=material_dict,
-        visualize=True,
-        verbose=False,
+        vis_dir=vis_dir,
+        visualize=visualize,
+        verbose=verbose,
     )
 
     import ipdb; ipdb.set_trace()

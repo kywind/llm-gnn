@@ -20,4 +20,5 @@ bitsandbytes
 dgl
 omegaconf
 gdown
+fairscale
 git+https://github.com/facebookresearch/segment-anything.git

@@ -16,7 +16,7 @@ from visualize import visualize_o3d
 class MultiviewParticleDataset:
 
     def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, 
-            text_labels_list=None, material_dict=None, visualize=False, verbose=False):
+            text_labels_list=None, material_dict=None, vis_dir=None, visualize=False, verbose=False):
         self.args = args
         self.depths = depths  # list of PIL depth images
         self.masks = masks  # list of masks
@@ -29,6 +29,7 @@ class MultiviewParticleDataset:
         # self.depth_thres = 0.599 / 0.8
         self.particle_num = 50
         self.adj_thresh = 0.1
+        self.vis_dir = vis_dir
         self.visualize = visualize
         self.verbose = verbose
 
@@ -278,7 +279,7 @@ class MultiviewParticleDataset:
             for pcd_index in range(len(pcd_list_all[camera_index])):
                 pcd = pcd_list_all[camera_index][pcd_index]
                 o3d.io.write_point_cloud(
-                    "vis/multiview-0/pcd_{}_{}.pcd".format(camera_index, pcd_index), pcd)
+                    os.path.join(self.vis_dir, "pcd_{}_{}.pcd".format(camera_index, pcd_index)), pcd)
                 # if self.visualize:
                 #     visualize_o3d([pcd], title="pcd_{}_{}".format(camera_index, pcd_index))
 
@@ -288,12 +289,12 @@ class MultiviewParticleDataset:
         for i in range(n_obj):
             obj = objs[i]
             o3d.io.write_point_cloud(
-                "vis/multiview-0/obj_{}.pcd".format(i), obj)
+                os.path.join(self.vis_dir, "obj_{}.pcd".format(i)), obj)
             if self.visualize:
                 visualize_o3d([obj], title="obj_{} ({})".format(i, global_label_list[i]))
 
             # save object text label
-            with open("vis/multiview-0/obj_label_{}.txt".format(i), "w") as f:
+            with open(os.path.join(self.vis_dir, "obj_label_{}.txt".format(i)), "w") as f:
                 f.write(global_label_list[i])
 
         # save global pcd
@@ -303,7 +304,7 @@ class MultiviewParticleDataset:
             if obj is None: continue
             global_pcd_o3d += obj
         o3d.io.write_point_cloud(
-            "vis/multiview-0/global_pcd.pcd", global_pcd_o3d)
+            os.path.join(self.vis_dir, "global_pcd.pcd"), global_pcd_o3d)
         if self.visualize:
             visualize_o3d([global_pcd_o3d], title="global_pcd_o3d")
         print("saved {} objects".format(n_obj))
@@ -411,7 +412,7 @@ class MultiviewParticleDataset:
             mesh.compute_vertex_normals()
             mesh.compute_triangle_normals()
             o3d.io.write_triangle_mesh(
-                "vis/multiview-0/obj_{}.ply".format(i), mesh)
+                os.path.join(self.vis_dir, "obj_{}.ply".format(i)), mesh)
             all_meshes.append(mesh)
             if self.visualize:
                 visualize_o3d([mesh], title="mesh_{}".format(i))

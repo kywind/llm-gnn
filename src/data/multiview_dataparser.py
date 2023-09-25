@@ -31,23 +31,39 @@ class MultiviewDataparser:
     fusing depth from multiview images
     """
 
-    def __init__(self, args, data_dir):
+    def __init__(self, args, data_dir, dataset_name):
         self.args = args
         self.device = args.device
 
-        n_cameras = 4
-        rgb_dir = [data_dir + f"camera_{i}/color" for i in range(n_cameras)]
-        depth_dir = [data_dir + f"camera_{i}/depth" for i in range(n_cameras)]
-        intr_dir = [data_dir + f"camera_{i}/camera_params.npy" for i in range(n_cameras)]
-        extr_dir = [data_dir + f"camera_{i}/camera_extrinsics.npy" for i in range(n_cameras)]
+        if dataset_name == "d3fields":
+            n_cameras = 4
+            rgb_dir = [data_dir + f"camera_{i}/color" for i in range(n_cameras)]
+            depth_dir = [data_dir + f"camera_{i}/depth" for i in range(n_cameras)]
+            intr_dir = [data_dir + f"camera_{i}/camera_params.npy" for i in range(n_cameras)]
+            extr_dir = [data_dir + f"camera_{i}/camera_extrinsics.npy" for i in range(n_cameras)]
 
-        img_index = 0
-        self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
-        self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
-        self.n_cameras = n_cameras
+            img_index = 0
+            self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
+            self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
+            self.n_cameras = n_cameras
 
-        self.cam_params = [np.load(intr_dir[i]) for i in range(n_cameras)]  # (4,) * n_cameras
-        self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
+            self.cam_params = [np.load(intr_dir[i]) for i in range(n_cameras)]  # (4,) * n_cameras
+            self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
+        
+        elif dataset_name == "ycb-flex":
+            n_cameras = 4
+            self.rgb_imgs = [data_dir + f"view_{i}/color.png" for i in range(1, n_cameras + 1)]
+            # self.depth_imgs = [data_dir + f"view_{i}/fgpcd.png" for i in range(1, n_cameras + 1)]
+            self.depth_img = None
+            intr_dir = [data_dir + f"view_{i}/camera_intrinsic_params.npy" for i in range(1, n_cameras + 1)]
+            extr_dir = [data_dir + f"view_{i}/camera_extrinsic_matrix.npy" for i in range(1, n_cameras + 1)]
+            
+            self.cam_params = [np.load(intr_dir[i]) for i in range(n_cameras)]  # (4,) * n_cameras
+            self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
+            import ipdb; ipdb.set_trace()
+        
+        else:
+            raise NotImplementedError
     
     def prepare_query_model(self):
         self.query_processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
