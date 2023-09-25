@@ -5,13 +5,16 @@ import cv2
 import torch
 from PIL import Image
 import open3d as o3d
+import pymeshfix
+import trimesh
 
 from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
-        opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor
+        opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor, label_colormap
 
 from visualize import visualize_o3d
 
 class MultiviewParticleDataset:
+
     def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, 
             text_labels_list=None, material_dict=None, visualize=False, verbose=False):
         self.args = args
@@ -24,8 +27,8 @@ class MultiviewParticleDataset:
 
         # self.global_scale = 24
         # self.depth_thres = 0.599 / 0.8
-        # self.particle_num = 50
-        # self.adj_thresh = 0.1
+        self.particle_num = 50
+        self.adj_thresh = 0.1
         self.visualize = visualize
         self.verbose = verbose
 
@@ -43,6 +46,9 @@ class MultiviewParticleDataset:
         # merge objects from different views
         objs = self.merge_views(global_pcds)
 
+        # merge invisible points to reduce ovelapping effects
+        # objs = self.remove_invisible_points(objs)
+
         save_pcd = True
         if save_pcd:
             self.save_view_pcd(pcds)
@@ -52,8 +58,10 @@ class MultiviewParticleDataset:
         self.labels = global_labels
 
         # mesh reconstruction
-        self.mesh_reconstruction()
+        meshes = self.mesh_reconstruction()
 
+        # sampling particles
+        particle_pcds = self.sample_particles_from_mesh(meshes)
 
     def depth_to_pcd(self):
         pcd_list_all = []
@@ -64,15 +72,33 @@ class MultiviewParticleDataset:
             masks = np.array(self.masks[camera_index])
             cam_param = self.cam_params[camera_index]
             cam_extrinsic = self.cam_extrinsics[camera_index]
-            pcd_list, pcd_rgb_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
+            pcd_list, pcd_rgb_list, pcd_normal_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
             pcds = []
             for obj_index in range(len(pcd_list)):
                 pcd = o3d.geometry.PointCloud()
                 pcd.points = o3d.utility.Vector3dVector(pcd_list[obj_index])
                 pcd.colors = o3d.utility.Vector3dVector(pcd_rgb_list[obj_index])
+                # pcd.normals = o3d.utility.Vector3dVector(pcd_normal_list[obj_index])
+                pcd = self.estimate_normal(pcd, cam_extrinsic)
                 pcds.append(pcd)
             pcd_list_all.append(pcds)
         return pcd_list_all
+
+    def estimate_normal(self, pcd, cam_extrinsic):
+        pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+        # make normals consistent
+        pcd.orient_normals_consistent_tangent_plane(100)
+
+        # normal in camera frame should point to the camera
+        # normals = normals * np.where(normals_cam[:, 2:] > 0, -1, 1)
+        normals = np.array(pcd.normals)
+        normals_cam = cam_extrinsic @ np.hstack((normals, np.ones((normals.shape[0], 1)))).T
+        normals_cam = normals_cam[:3, :].T
+        if np.where(normals_cam[:, 2:] > 0, 1, 0).sum() > 0.5 * normals_cam.shape[0]:
+            normals = normals * -1
+        pcd.normals = o3d.utility.Vector3dVector(normals)
+        return pcd
     
     def remove_outliers(self, pcd_list_all):
         total_pcd = o3d.geometry.PointCloud()
@@ -118,12 +144,15 @@ class MultiviewParticleDataset:
         ## using open3d remove statistical outliers
         objs = []
         for i in range(len(global_pcd_list)):
-            obj_pcd_list = global_pcd_list[i]
-
             obj = o3d.geometry.PointCloud()
-            for j in range(len(obj_pcd_list)):
-                obj_pcd = obj_pcd_list[j]
+            for j in range(len(global_pcd_list[i])):
+                obj_pcd = global_pcd_list[i][j]
                 if obj_pcd is None: continue
+
+                # local refinement based on icp
+                # if len(obj.points) > 0: # first view as the reference
+                #     obj_pcd = self.local_refinement(obj_pcd, obj)
+
                 obj += obj_pcd
 
             outliers = None
@@ -146,14 +175,12 @@ class MultiviewParticleDataset:
                 if self.verbose:
                     print("object {}, iter {}, removed {} outliers".format(i, rm_iter, len(new_outlier.points)))
 
-            # global_pcd_list[i] = obj_pcd_list
             objs.append(obj)
         
-            if self.visualize:
-                outliers.paint_uniform_color([0.0, 0.8, 0.0])
-                visualize_o3d([obj, outliers], title="obj_{} and outliers".format(i))
+            # if self.visualize:
+            #     outliers.paint_uniform_color([0.0, 0.8, 0.0])
+            #     visualize_o3d([obj, outliers], title="obj_{} and outliers".format(i))
 
-        # return global_pcd_list
         return objs  # no need to separate views
 
     def compute_plane(self, pcd):
@@ -284,13 +311,13 @@ class MultiviewParticleDataset:
     def parse_pcd(self, depth, masks, rgb, cam_param, cam_extrinsic):
         pcd_list = []
         pcd_rgb_list = []
+        pcd_normal_list = []
         for i in range(masks.shape[0]):
             mask = masks[i]
             mask = np.logical_and(mask, depth > 0)
 
             # to camera frame
             fgpcd = np.zeros((mask.sum(), 3))
-            fgpcd_label = np.zeros((mask.sum(), 2))
             fx, fy, cx, cy = cam_param
             pos_x, pos_y = np.meshgrid(np.arange(mask.shape[1]), np.arange(mask.shape[0]))  # w, h
             pos_x = pos_x[mask]
@@ -305,13 +332,47 @@ class MultiviewParticleDataset:
             fgpcd_color[:, 1] = rgb[:, :, 1][mask]
             fgpcd_color[:, 2] = rgb[:, :, 2][mask]
 
+            # estimate normal from depth
+            # fgpcd_normal = np.zeros((mask.sum(), 3))
+            # depth *= 1000.0  # magnify depth
+            # fgpcd_normal[:, 0] = cv2.Sobel(depth, cv2.CV_64F, 1, 0, ksize=3)[mask] * fx
+            # fgpcd_normal[:, 1] = cv2.Sobel(depth, cv2.CV_64F, 0, 1, ksize=3)[mask] * fy
+            # fgpcd_normal[:, 2] = -depth[mask]
+            # fgpcd_normal = fgpcd_normal / np.linalg.norm(fgpcd_normal, axis=1, keepdims=True)
+            # depth /= 1000.0  # recover depth
+
             # to world frame
             fgpcd = np.hstack((fgpcd, np.ones((fgpcd.shape[0], 1))))
             fgpcd = np.matmul(fgpcd, np.linalg.inv(cam_extrinsic).T)[:, :3]
 
             pcd_list.append(fgpcd)
             pcd_rgb_list.append(fgpcd_color)
-        return pcd_list, pcd_rgb_list
+            # pcd_normal_list.append(fgpcd_normal)
+        return pcd_list, pcd_rgb_list, pcd_normal_list
+
+    def remove_invisible_points(self, objs):
+        for i in range(len(objs)):
+            visible = np.arange(len(objs[i].points))
+            for j in range(self.n_cameras):
+                cam_extrinsic = self.cam_extrinsics[j]
+                cam_location = np.matmul(cam_extrinsic, np.array([0, 0, 0, 1]))[:3]
+                radius = np.linalg.norm(cam_location) * 100
+                _, visible_indices = objs[i].hidden_point_removal(cam_location, radius)
+                visible = np.intersect1d(visible, visible_indices)
+            objs[i] = objs[i].select_by_index(visible)
+        return objs
+
+    def local_refinement(self, source, target, distance_threshold=0.001):
+        # local refinement
+        result = o3d.pipelines.registration.registration_icp(
+            source, target, 
+            max_correspondence_distance=distance_threshold, 
+            init=np.eye(4)
+        )
+        transformation = result.transformation
+        print(transformation)
+        source.transform(transformation)
+        return source
 
     def mesh_reconstruction(self):
         # convert pcd to mesh with alpha shape
@@ -320,8 +381,33 @@ class MultiviewParticleDataset:
         for i in range(len(self.objs)):
             obj = self.objs[i]
             if obj is None: continue
-            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(
-                obj, alpha)
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(obj, alpha)
+            # mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(obj,
+            #         o3d.utility.DoubleVector([0.04, 0.08, 0.16]))
+            # if we have good normals, we can use poisson reconstruction
+            # mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(obj, depth=4)
+
+            fix_mesh = False
+            if fix_mesh:
+                mf = pymeshfix.MeshFix(np.asarray(mesh.vertices), np.asarray(mesh.triangles))
+                mf.repair()
+                mesh.vertices = o3d.utility.Vector3dVector(mf.v)
+                mesh.triangles = o3d.utility.Vector3iVector(mf.f)
+                # mesh = mesh.remove_degenerate_triangles()
+                # mesh = mesh.remove_duplicated_triangles()
+                # mesh = mesh.remove_duplicated_vertices()
+                # mesh = mesh.remove_non_manifold_edges()
+                # mesh = mesh.remove_unreferenced_vertices()
+                # mesh = mesh.filter_smooth_simple(number_of_iterations=10)
+                vertices = np.asarray(mesh.vertices)
+                faces = np.asarray(mesh.triangles)
+                vertices, faces = trimesh.remesh.subdivide_to_size(vertices, faces, 
+                        max_edge=0.01, max_iter=10, return_index=False)
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(vertices)
+                mesh.triangles = o3d.utility.Vector3iVector(faces)
+                mesh = mesh.filter_smooth_simple(number_of_iterations=2)
+
             mesh.compute_vertex_normals()
             mesh.compute_triangle_normals()
             o3d.io.write_triangle_mesh(
@@ -331,6 +417,21 @@ class MultiviewParticleDataset:
                 visualize_o3d([mesh], title="mesh_{}".format(i))
         if self.visualize:
             visualize_o3d(all_meshes, title="all_meshes")
+        return all_meshes
+
+    def sample_particles_from_mesh(self, meshes):
+        # sample particles from mesh with poisson disk sampling
+        particle_pcds = []
+        color_map = label_colormap() / 255.0
+        for i in range(len(meshes)):
+            pcd = meshes[i].sample_points_poisson_disk(self.particle_num)
+            particle_pcds.append(pcd)
+            pcd.paint_uniform_color(color_map[i])
+            if self.visualize:
+                visualize_o3d([pcd], title="sampled pcd_{}".format(i))
+        if self.visualize:
+            visualize_o3d(particle_pcds, title="sampled pcds")
+        return particle_pcds
 
     ### legacy functions ###
 
