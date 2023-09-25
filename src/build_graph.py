@@ -48,6 +48,9 @@ def build_graph(args):
     # vis_dir = "vis/multiview-ycb-0/"
     # dataset_name = "ycb-flex"
 
+    if skip_segment:
+        assert os.path.exists(vis_dir), "vis_dir does not exist"
+        assert os.path.exists(os.path.join(vis_dir, 'mask_0_0.png')), "mask_0_0.png does not exist"
     os.makedirs(vis_dir, exist_ok=True)
 
     # initial dataparser
