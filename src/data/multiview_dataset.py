@@ -38,7 +38,7 @@ class MultiviewParticleDataset:
         pcds = self.remove_outliers(pcds)
 
         # find corresponding objects in different views
-        global_pcds, global_labels = self.pcd_grouping(pcds)
+        global_pcds, global_labels, global_ids = self.pcd_grouping(pcds)
 
         # merge objects from different views
         objs = self.merge_views(global_pcds)
@@ -231,6 +231,10 @@ class MultiviewParticleDataset:
                         global_pcd_list[-1].extend([None] * i)  # fill to same length
                         global_pcd_list[-1].extend([pcd])
 
+                        global_id_list.append([])  # new object
+                        global_id_list[-1].extend([None] * i)  # fill to same length
+                        global_id_list[-1].extend([(i, j)])
+
                         # store the id of the new object
                         global_label_list.append(self.text_labels[i][j])
                         picked_k.append(len(global_pcd_list) - 1)
@@ -238,8 +242,9 @@ class MultiviewParticleDataset:
             # fill to same length
             for m in range(len(global_pcd_list)):
                 global_pcd_list[m].extend([None] * (i + 1 - len(global_pcd_list[m])))
+                global_id_list[m].extend([None] * (i + 1 - len(global_id_list[m])))
 
-        return global_pcd_list, global_label_list
+        return global_pcd_list, global_label_list, global_id_list
 
     def save_view_pcd(self, pcd_list_all):
         for camera_index in range(self.n_cameras):
