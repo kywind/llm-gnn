@@ -76,8 +76,10 @@ class MultiviewDataparser:
         del self.query_model
         torch.cuda.empty_cache()
 
-    def query(self, texts, camera_index, bbox=None, mask=None):
-        inputs = self.query_processor(text=texts, images=self.rgb_imgs[camera_index], return_tensors="pt").to("cuda", torch.float16)
+    def query(self, texts, camera_index, image=None, bbox=None, mask=None):
+        if image is None:
+            image = self.rgb_imgs[camera_index]
+        inputs = self.query_processor(text=texts, images=image, return_tensors="pt").to("cuda", torch.float16)
         generated_ids = self.query_model.generate(**inputs)
         generated_text = self.query_processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         return generated_text

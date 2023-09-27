@@ -16,6 +16,7 @@ import open3d as o3d
 
 import cv2
 import glob
+# from nltk.corpus import wordnet
 
 
 def build_graph(args):
@@ -26,9 +27,10 @@ def build_graph(args):
     ## configs
     visualize = False
     verbose = False
-    skip_query = False
-    skip_material = True
-    skip_segment = False
+    skip_query = True
+    llm_parse_object = False
+    skip_segment = True
+    skip_material = False
 
     camera_indices = [0, 1, 2, 3]
     data_dir = "../data/2023-09-13-15-19-50-765863/"
@@ -51,60 +53,92 @@ def build_graph(args):
     if not skip_query:
         init_parser.prepare_query_model()
         obj_list = []
+        obj_dict = {}
         for camera_index in camera_indices:
-            query_results = init_parser.query(
-                texts='What objects are on the table? Answer:',
-                camera_index=camera_index
-            )
-            objs = query_results.rstrip('.').split(',')
-            for obj in objs:
-                obj = obj.strip(' ')
-                obj = obj.lstrip('and')
-                obj = obj.strip(' ')
-                if obj not in obj_list:
+            n_cut = 2
+            h, w = init_parser.rgb_imgs[camera_index].size
+            for i in range(n_cut):
+                for j in range(n_cut):
+                    # image = init_parser.rgb_imgs[camera_index].crop((h * i // (2 * n_cut), w * j // (2 * n_cut), h * (i + 2) // (2 * n_cut), w * (j + 2) // (2 * n_cut)))
+                    image = init_parser.rgb_imgs[camera_index].crop((h * i // n_cut, w * j // n_cut, h * (i + 1) // n_cut, w * (j + 1) // n_cut))
+                    query_results = init_parser.query(
+                        texts='What objects are in the image? Answer:',
+                        camera_index=camera_index,
+                        image=image,
+                    )
+                    objs = query_results.rstrip('.').split(',')
+                    for obj in objs:
+                        obj = obj.strip(' ')
+                        # synonyms = wordnet.synsets('change')
+                        # synonyms_names = [word.lemma_names() for word in synonyms]
+                        import ipdb; ipdb.set_trace()
+                        if obj not in obj_dict:
+                            if obj != '':
+                                obj_dict[obj] = 1
+                        else:
+                            obj_dict[obj] += 1
+            for obj in obj_dict:
+                if obj_dict[obj] >= 2:
                     obj_list.append(obj)
         init_parser.del_query_model()
         print('After query, obj_list:', obj_list)
     else:
         obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
+        # obj_list = ['mouse', 'keyboard', 'pen', 'box', 'cup', 'cup mat']
         # obj_list = ['a mustard bottle']
+        # obj_list = ['camera', 'tripod', 'box', 'camera lens', 'camera body', 'computer mouse', 'computer keyboard', 
+        #     'computer monitor', 'computer mouse pad', 'computer', 'remote control', 'mouse', 'keyboard', 'mouse pad', 
+        #     'mousepad', 'pen', 'a box', 'coffee mug', 'a cookie', 'phone', 'tablet', 'a mousepad', 'box of cookies', 
+        #     'cookie', 'knife', 'tape measure', 'a green screen', 'cup', 'chair', 'table', 'roll of tape', 'a pair of scissors']
+        # obj_list = ['camera', 'tripod', 'box', 'keyboard', 'mouse', 'remote control', 'pen', 'coffee mug', 'phone', 'tablet', 
+        #     'cookie', 'knife', 'tape measure', 'green screen', 'cup', 'chair', 'table', 'roll of tape', 'scissors']
 
-    material_dict = {}
-    if not skip_material:
-        for obj_name in obj_list:
-            material_prompt = " ".join([
-                "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
-                "Respond unknown if you are not sure."
-                "\n\nQuery: coffee bean. Answer: granular.",
-                "\n\nQuery: rope. Answer: rope.",
-                "\n\nQuery: a wooden block. Answer: rigid.",
-                "\n\nQuery: a banana. Answer: rigid.",
-                "\n\nQuery: an orange. Answer: rigid.",
-                "\n\nQuery: play-doh. Answer: deformable.",
-                "\n\nQuery: sand. Answer: granular.",
-                "\n\nQuery: a bottle. Answer: rigid.",
-                "\n\nQuery: a t-shirt. Answer: deformable.",
-                "\n\nQuery: rice. Answer: granular.",
-                "\n\nQuery: laptop. Answer: rigid.",
-                "\n\nQuery: " + obj_name + ". Answer:",
+        if llm_parse_object:
+            objects_prompt = " ".join([
+                "Summarize a list of words and phrases into a list of objects.",
+                "Words that describe the same object should be merged.",
+                "For example, 'a cup' and 'a mug' should be merged into 'a cup'.",
+                "'a banana' and 'bananas' should be merged into 'a banana'.",
+                "'a bottle', 'a water bottle' and 'a bottle of water' should be merged into 'a bottle'.",
+                "'eyeglasses' and 'glasses' should be merged into 'glasses'.",
+                "'a pair of scissors' and 'scissors' should be merged into 'scissors'.",
+                "You should separate each merged object by a comma.",
+                "The list is: ",
+                ", ".join(obj_list),
+                "Answer: "
             ])
-            material = llm.query(material_prompt)
-            material = material.rstrip('.')
-            material_dict[obj_name] = material
+            objects = llm.query(objects_prompt)
+            obj_list_llm = objects.rstrip('.').split(',')
+            for i in range(len(obj_list_llm)):
+                obj_list_llm[i] = obj_list_llm[i].strip(' ')
+            obj_list = obj_list_llm
+
+    # import ipdb; ipdb.set_trace()
 
     mask_list = []
     text_labels_list = []
 
     if not skip_segment:
         for camera_index in camera_indices:
-            segmentation_results, detection_results = init_parser.segment_gdino(
-                obj_list=obj_list,
-                camera_index=camera_index,
-            )
-            masks, _, text_labels = segmentation_results
-            # _, _, labels = detection_results
+            masks = []
+            text_labels = []
+            chunk_size = 5
+            for t in range(len(obj_list) // chunk_size + 1):
+                obj_list_chunk = obj_list[t * chunk_size : (t + 1) * chunk_size]
+                if len(obj_list_chunk) == 0: continue
+                segmentation_results, detection_results = init_parser.segment_gdino(
+                    obj_list=obj_list_chunk,
+                    camera_index=camera_index,
+                )
+                if segmentation_results is None: continue
+                masks_chunk, _, text_labels_chunk = segmentation_results
+                # _, _, labels = detection_results
 
-            masks = masks.detach().cpu().numpy()  # (n_detect, H, W) boolean            
+                masks_chunk = masks_chunk.detach().cpu().numpy()  # (n_detect, H, W) boolean
+                masks.append(masks_chunk)
+                text_labels.extend(text_labels_chunk)
+            masks = np.concatenate(masks, axis=0)
+
             for i in range(masks.shape[0]):
                 mask = (masks[i] * 255).astype(np.uint8)
                 cv2.imwrite(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)), mask)
@@ -129,6 +163,33 @@ def build_graph(args):
 
             mask_list.append(masks)
             text_labels_list.append(text_labels)
+
+    # import ipdb; ipdb.set_trace()
+
+    material_dict = {}
+    if not skip_material:
+        for obj_name in obj_list:
+            material_prompt = " ".join([
+                "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
+                "Respond unknown if you are not sure."
+                "\n\nQuery: coffee bean. Answer: granular.",
+                "\n\nQuery: rope. Answer: rope.",
+                "\n\nQuery: a wooden block. Answer: rigid.",
+                "\n\nQuery: a banana. Answer: rigid.",
+                "\n\nQuery: an orange. Answer: rigid.",
+                "\n\nQuery: play-doh. Answer: deformable.",
+                "\n\nQuery: sand. Answer: granular.",
+                "\n\nQuery: a bottle. Answer: rigid.",
+                "\n\nQuery: a t-shirt. Answer: deformable.",
+                "\n\nQuery: rice. Answer: granular.",
+                "\n\nQuery: laptop. Answer: rigid.",
+                "\n\nQuery: " + obj_name + ". Answer:",
+            ])
+            material = llm.query(material_prompt)
+            material = material.rstrip('.')
+            material_dict[obj_name] = material
+
+    import ipdb; ipdb.set_trace()
 
     # set dataset
     cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
