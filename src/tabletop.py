@@ -6,11 +6,11 @@ import torchvision
 import torchvision.transforms as transforms
 
 from config import gen_args
-from gnn.model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
-from gnn.utils import set_seed, Tee, count_parameters
-from gnn.utils import load_data, get_env_group, get_scene_info, prepare_input
+from gnn.model_wrapper import gen_model
+from gnn.utils import set_seed
 
 from data.multiview_dataparser import MultiviewDataparser
+from data.multiview_tabletop_dataparser import MultiviewTabletopDataparser
 from data.multiview_dataset import MultiviewParticleDataset
 from llm.llm import LLM
 import pyflex
@@ -34,19 +34,13 @@ def build_graph(args):
     ## configs
     visualize = False
     verbose = False
-    blip_query = False
-    ram_query = False
     skip_segment = False
+    tabletop_3in1_query = True
 
     camera_indices = [0, 1, 2, 3]
-
-    # data_dir = "../data/2023-09-13-15-19-50-765863/"
-    # vis_dir = "vis/multiview-0-debug/"
-    # dataset_name = "d3fields"
-
-    data_dir = "../data/mustard_bottle/"
-    vis_dir = "vis/multiview-ycb-0/"
-    dataset_name = "ycb-flex"
+    data_dir = "../data/2023-09-13-15-19-50-765863/"
+    vis_dir = "vis/multiview-tabletop-0/"
+    dataset_name = "d3fields"
 
     if skip_segment:
         assert os.path.exists(vis_dir), "vis_dir does not exist"
@@ -54,134 +48,66 @@ def build_graph(args):
     os.makedirs(vis_dir, exist_ok=True)
 
     # initial dataparser
-    init_parser = MultiviewDataparser(args, data_dir, dataset_name)
+    init_parser = MultiviewTabletopDataparser(args, data_dir, dataset_name)
+    llm = LLM(args)
 
-    if blip_query:
-        llm = LLM(args)
+    if not tabletop_3in1_query:
         init_parser.prepare_query_model()
-
         obj_list = []
         for camera_index in camera_indices:
             obj_list_view = []
-            for i in range(3):
-                if i == 0:
-                    query_results = init_parser.query(
-                        texts='What objects are on the table? Answer:',
-                        camera_index=camera_index
-                    )
-                else:
-                    existing_objs = ', '.join(obj_list_view)
-                    query_results = init_parser.query(
-                        texts=" ".join([
-                            f"What objects are on the table except {existing_objs}?",
-                            "Answer none if there aren't any.",
-                            "Answer:",
-                        ]),
-                        camera_index=camera_index,
-                    )
-                print(f'index {camera_index}, round {i}, query_results: {query_results}')
-                objs = query_results.rstrip('.').split(',')
-                if objs in [['none'], ['None'], [' none'], [' None']]:
-                    break
-                for obj in objs:
-                    obj = obj.strip(' ')
-                    obj = obj.lstrip('and')
-                    obj = obj.strip(' ')
-                    if obj not in obj_list:
-                        obj_list.append(obj)
-                    if obj not in obj_list_view:
-                        obj_list_view.append(obj)
-
+            query_results = init_parser.query(
+                texts='What objects are on the table? Answer:',
+                camera_index=camera_index
+            )
+            objs = query_results.rstrip('.').split(',')
+            for obj in objs:
+                obj = obj.strip(' ')
+                obj = obj.lstrip('and')
+                obj = obj.strip(' ')
+                if obj not in obj_list:
+                    obj_list.append(obj)
+                if obj not in obj_list_view:
+                    obj_list_view.append(obj)
+            obj_list.append(obj_list_view)
         init_parser.del_query_model()
         print('After query, obj_list:', obj_list)
-        import ipdb; ipdb.set_trace()
-
-    elif ram_query:
-        from data.ram.model import ram
-        image_size = 384
-        transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-        ram_model = ram(
-            pretrained="weights/ram_swin_large_14m.pth",
-            image_size=image_size,
-            vit="swin_l",
-        )
-        ram_model.eval()
-        ram_model = ram_model.to(device)
-
-        obj_list = []
-        for camera_index in camera_indices:
-            image_pil = init_parser.rgb_imgs[camera_index]
-            raw_image = image_pil.resize((image_size, image_size))
-            raw_image = transform(raw_image).unsqueeze(0).to(device)
-
-            with torch.no_grad():
-                tags, _ = ram_model.generate_tag(raw_image)
-                tags = tags[0].split('|')
-                for tag in tags:
-                    tag = tag.strip(' ')
-                    if tag not in obj_list:
-                        obj_list.append(tag)
-                print(f'camera {camera_index}, tags:', tags)
-        print('After query, obj_list:', obj_list)
     else:
-        # obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
-        obj_list = ['a mustard bottle']
-
-    # obj_prompt = " ".join([
-    #     "What are the individual objects mentioned in the query?",
-    #     "Respond unknown if you are not sure."
-    #     "\n\nQuery: bottle. Answer: a bottle.",
-    #     "\n\nQuery: a knife, and a board. Answer: a knife, a board.",
-    #     "\n\nQuery: a rope, a scissor, and a bag of bananas. Answer: a rope, scissor, a banana.",
-    #     "\n\nQuery: a pile of sand. Answer: sand.",
-    #     "\n\nQuery: oranges. Answer: oranges.",
-    #     "\n\nQuery: rices. Answer: rices.",
-    #     "\n\nQuery: a pile of sand, a pile of play-doh, and a pile of coffee beans. Answer:sand, play-doh, coffee bean.",
-    #     "\n\nQuery: " + query_results + ". Answer:",
-    # ])
-    # objs_str = llm.query(obj_prompt)
-    # print('objs_str:', objs_str)
-    # objs = objs_str.rstrip('.').split(',')
+        obj_list = []
+        obj_list, mask_list, text_label_list = init_parser.tabletop_3in1_query()
 
     material_dict = {}
     for obj_name in obj_list:
-        material_dict[obj_name] = 'rigid'  # TODO
+        if obj_name not in material_dict:
+            material_prompt = " ".join([
+                "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
+                "Respond unknown if you are not sure."
+                "\n\nQuery: coffee bean. Answer: granular.",
+                "\n\nQuery: rope. Answer: rope.",
+                "\n\nQuery: a wooden block. Answer: rigid.",
+                "\n\nQuery: a banana. Answer: rigid.",
+                "\n\nQuery: an orange. Answer: rigid.",
+                "\n\nQuery: play-doh. Answer: deformable.",
+                "\n\nQuery: sand. Answer: granular.",
+                "\n\nQuery: a bottle. Answer: rigid.",
+                "\n\nQuery: a t-shirt. Answer: deformable.",
+                "\n\nQuery: rice. Answer: granular.",
+                "\n\nQuery: laptop. Answer: rigid.",
+                "\n\nQuery: " + obj_name + ". Answer:",
+            ])
+            material = llm.query(material_prompt)
+            material = material.rstrip('.')
+            material_dict[obj_name] = material
 
-    print('material_dict:', material_dict)
-
-    # for obj_name in obj_list:
-    #     material_prompt = " ".join([
-    #         "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
-    #         "Respond unknown if you are not sure."
-    #         "\n\nQuery: coffee bean. Answer: granular.",
-    #         "\n\nQuery: rope. Answer: rope.",
-    #         "\n\nQuery: a wooden block. Answer: rigid.",
-    #         "\n\nQuery: a banana. Answer: rigid.",
-    #         "\n\nQuery: an orange. Answer: rigid.",
-    #         "\n\nQuery: play-doh. Answer: deformable.",
-    #         "\n\nQuery: sand. Answer: granular.",
-    #         "\n\nQuery: a bottle. Answer: rigid.",
-    #         "\n\nQuery: a t-shirt. Answer: deformable.",
-    #         "\n\nQuery: rice. Answer: granular.",
-    #         "\n\nQuery: laptop. Answer: rigid.",
-    #         "\n\nQuery: " + obj_name + ". Answer:",
-    #     ])
-    #     material = llm.query(material_prompt)
-    #     material = material.rstrip('.')
-    #     material_list.append(material)
+    # set gnn model
+    model, model_loss = gen_model(args, material_dict)
+    model.eval()
+    model = model.to(device)
 
     mask_list = []
     text_labels_list = []
 
-    if not skip_segment:
+    if not skip_segment and not tabletop_3in1_query:
         for camera_index in camera_indices:
             segmentation_results, detection_results = init_parser.segment_gdino(
                 obj_list=obj_list,
@@ -200,7 +126,7 @@ def build_graph(args):
             mask_list.append(masks)
             text_labels_list.append(text_labels)
 
-    else:
+    elif skip_segment and not tabletop_3in1_query:
         for camera_index in camera_indices:
             masks = []
             text_labels = []
@@ -216,120 +142,8 @@ def build_graph(args):
             mask_list.append(masks)
             text_labels_list.append(text_labels)
 
-    ### LLM START ### set_initial_args
-    ### LLM END ###
-    args.material = 'rigid'  # TODO only for debugging
-
-    # set gnn model
-    model = Model(args)
-    model.eval()
-    model = model.to(device)
-
-    if args.material == 'deformable':
-        emd_loss = EarthMoverLoss()
-        chamfer_loss = ChamferLoss()
-        h_loss = HausdorffLoss()
-        model_loss = [emd_loss, chamfer_loss, h_loss]
-
-    elif args.material in ['rigid', 'multi_rigid', 'granular', 'rope', 'cloth']:
-        mse_loss = torch.nn.MSELoss()
-        model_loss = [mse_loss]
-
-    else:
-        model_loss = []
-        ### LLM START ### set_loss
-        ### LLM END ###
-
-    if args.material == 'granular':
-        args.attr_dim = 1
-        args.n_his = 1
-        args.state_dim = 0
-        args.action_dim = 3
-        args.load_action = True  # long actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 3
-        args.time_step = 1
-        args.dt = None
-        args.sequence_length = 4
-        args.scene_params_dim = 1
-    
-    elif args.material == 'rigid':  # TODO
-        args.attr_dim = 1
-        args.n_his = 1
-        args.state_dim = 3
-        args.action_dim = 3
-        args.load_action = True  # long actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 3
-        args.time_step = 1
-        args.dt = None
-        args.sequence_length = 4
-        args.scene_params_dim = 1
-
-    elif args.material == 'deformable':
-        args.attr_dim = 3
-        args.n_his = 4
-        args.state_dim = 3
-        args.action_dim = 0
-        args.load_action = False  # timestep actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 2
-        args.time_step = 119
-        args.dt = 1. / 60.
-        args.sequence_length = 6
-        args.scene_params_dim = 1
-
-    else:
-        args.attr_dim = None
-        args.n_his = None
-        args.state_dim = None
-        ### LLM START ### set_arg_dimensions
-        ### LLM END ###
-
     # set dataset
-    pyflex_cams = False
-    if pyflex_cams:
-        screenWidth = 720
-        screenHeight = 720
-        headless = True
-        pyflex.set_screenWidth(screenWidth)
-        pyflex.set_screenHeight(screenHeight)
-        pyflex.set_light_dir(np.array([0.1, 2.0, 0.1]))
-        pyflex.set_light_fov(70.)
-        pyflex.init(headless)
-
-        cam_params_list = []
-        cam_extrinsics_list = []
-        for cam_idx in camera_indices:
-            rad = np.deg2rad(cam_idx * 20.)
-            global_scale = 24
-            cam_dis = 0.0 * global_scale / 8.0
-            cam_height = 6.0 * global_scale / 8.0
-            camPos = np.array([np.sin(rad) * cam_dis, cam_height, np.cos(rad) * cam_dis])
-            camAngle = np.array([rad, -np.deg2rad(90.), 0.])
-            pyflex.set_camPos(camPos)
-            pyflex.set_camAngle(camAngle)
-
-            projMat = pyflex.get_projMatrix().reshape(4, 4).T
-            cx = screenWidth / 2.0
-            cy = screenHeight / 2.0
-            fx = projMat[0, 0] * cx
-            fy = projMat[1, 1] * cy
-            cam_params =  [fx, fy, cx, cy]
-
-            cam_extrinsics = np.array(pyflex.get_viewMatrix()).reshape(4, 4).T
-            cam_params_list.append(cam_params)
-            cam_extrinsics_list.append(cam_extrinsics)
-        cam_list = (cam_params_list, cam_extrinsics_list)
-    
-    else:  # init_parser cam_list
-        cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
+    cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
 
     data = MultiviewParticleDataset(
         args=args,

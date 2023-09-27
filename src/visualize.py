@@ -30,7 +30,7 @@ def visualize_o3d(
         vis.add_geometry(geometry)
         vis.update_geometry(geometry)
 
-    vis.get_render_option().background_color = np.array([0.0, 0.0, 0.0])
+    vis.get_render_option().background_color = np.array([1.0, 1.0, 1.0])
     if show_frame:
         mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.15)
         vis.add_geometry(mesh)

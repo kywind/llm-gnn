@@ -25,8 +25,10 @@ from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 from data.utils import label_colormap
 from config import gen_args
 
+import open3d as o3d
 
-class MultiviewDataparser:
+
+class MultiviewTabletopDataparser:
     """
     fusing depth from multiview images
     """
@@ -49,12 +51,15 @@ class MultiviewDataparser:
 
             self.cam_params = [np.load(intr_dir[i]) for i in range(n_cameras)]  # (4,) * n_cameras
             self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
+
+            # self.bbox = [0, 0, 640, 480]  # in meters, the bounding box of the workspace
+            self.tabletop = [(58, 84), (310, 354), (634, 210), (507, 354)]  # x, y
         
         elif dataset_name == "ycb-flex":
             n_cameras = 4
-            self.rgb_imgs = [Image.open(data_dir + f"view_{i}/color.png").convert('RGB') for i in range(1, n_cameras + 1)]
-            # self.depth_imgs = [data_dir + f"view_{i}/fgpcd.pcd" for i in range(1, n_cameras + 1)]
-            self.depth_imgs = None
+            self.rgb_imgs = [data_dir + f"view_{i}/color.png" for i in range(1, n_cameras + 1)]
+            # self.depth_imgs = [data_dir + f"view_{i}/fgpcd.png" for i in range(1, n_cameras + 1)]
+            self.depth_img = None
             intr_dir = [data_dir + f"view_{i}/camera_intrinsic_params.npy" for i in range(1, n_cameras + 1)]
             extr_dir = [data_dir + f"view_{i}/camera_extrinsic_matrix.npy" for i in range(1, n_cameras + 1)]
             
@@ -65,18 +70,116 @@ class MultiviewDataparser:
         else:
             raise NotImplementedError
     
-    def prepare_query_model(self):
-        self.query_processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        self.query_model = Blip2ForConditionalGeneration.from_pretrained(
-            "Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
-        )
 
-    def del_query_model(self):
-        del self.query_processor
-        del self.query_model
-        torch.cuda.empty_cache()
+    def parse_pcd(self, depth, cam_param, cam_extrinsic):
+        # to camera frame
+        import ipdb; ipdb.set_trace() # check depth shape
+        fgpcd = np.zeros((depth.shape[0] * depth.shape[1], 3))
+        fx, fy, cx, cy = cam_param
+        pos_x, pos_y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))  # w, h
+        fgpcd[:, 0] = (pos_x - cx) * depth / fx
+        fgpcd[:, 1] = (pos_y - cy) * depth / fy
+        fgpcd[:, 2] = depth
+        # to world frame
+        fgpcd = np.hstack((fgpcd, np.ones((fgpcd.shape[0], 1))))
+        fgpcd = np.matmul(fgpcd, np.linalg.inv(cam_extrinsic).T)[:, :3]
+        return fgpcd
 
-    def query(self, texts, camera_index, bbox=None, mask=None):
+    def parse_table(self):
+        table = self.tabletop
+        table_depths = []
+        depth = np.array(self.depth_imgs[0])
+        for i in range(4):
+            w = table[i][0]
+            h = table[i][1]
+            table_depths.append(depth[h, w])   # first image
+            # import ipdb; ipdb.set_trace()
+
+        plane_depth = depth[212, 281]
+        
+        corner_1_depth = table_depths[0]
+        # line_1_dir = [table[1][0] - table[0][0], table[1][1] - table[0][1]]  # w, h
+        corner_2_depth = table_depths[2]
+        # line_2_dir = [table[3][0] - table[2][0], table[3][1] - table[2][1]]  # w, h
+
+        corner_1 = np.zeros(3)
+        corner_1[0] = (table[0][0] - self.cam_params[0][2]) * corner_1_depth / self.cam_params[0][0]
+        corner_1[1] = (table[0][1] - self.cam_params[0][3]) * corner_1_depth / self.cam_params[0][1]
+        corner_1[2] = corner_1_depth
+
+        corner_2 = np.zeros(3)
+        corner_2[0] = (table[2][0] - self.cam_params[0][2]) * corner_2_depth / self.cam_params[0][0]
+        corner_2[1] = (table[2][1] - self.cam_params[0][3]) * corner_2_depth / self.cam_params[0][1]
+        corner_2[2] = corner_2_depth
+
+        plane_point = np.zeros(3)
+        plane_point[0] = (281 - self.cam_params[0][2]) * plane_depth / self.cam_params[0][0]
+        plane_point[1] = (212 - self.cam_params[0][3]) * plane_depth / self.cam_params[0][1]
+        plane_point[2] = plane_depth
+
+        corner_1 = np.hstack((corner_1, np.ones(1)))
+        corner_2 = np.hstack((corner_2, np.ones(1)))
+        corner_1_world = np.matmul(corner_1, np.linalg.inv(self.cam_extrinsics[0]).T)
+        corner_2_world = np.matmul(corner_2, np.linalg.inv(self.cam_extrinsics[0]).T)
+        corner_1_world = corner_1_world[:3] * 0.001
+        corner_2_world = corner_2_world[:3] * 0.001
+
+        plane_point = np.hstack((plane_point, np.ones(1)))
+        plane_point_world = np.matmul(plane_point, np.linalg.inv(self.cam_extrinsics[0]).T)
+        plane_point_world = plane_point_world[:3] * 0.001
+
+        bbox = np.zeros(6) # x_min, y_min, x_max, y_max, z_min, z_max
+        bbox[0] = min(corner_1_world[0], corner_2_world[0])
+        bbox[1] = min(corner_1_world[1], corner_2_world[1])
+        bbox[2] = max(corner_1_world[0], corner_2_world[0])
+        bbox[3] = max(corner_1_world[1], corner_2_world[1])
+        bbox[5] = plane_point_world[2] - 0.01  # z_max is table plane
+        bbox[4] = bbox[5] - 0.5  # z_min is above table plane
+
+        # transform depth to world coordinate
+        depth = np.array(self.depth_imgs[0])
+        depth_mask = np.zeros(depth.shape)
+        depth_world = np.zeros((depth.shape[0], depth.shape[1], 4))
+        fx, fy, cx, cy = self.cam_params[0]
+        pos_x, pos_y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))  # w, h
+        depth_world[:, :, 0] = (pos_x - cx) * depth / fx
+        depth_world[:, :, 1] = (pos_y - cy) * depth / fy
+        depth_world[:, :, 2] = depth
+        depth_world[:, :, 3] = 1
+        depth_world = np.matmul(depth_world, np.linalg.inv(self.cam_extrinsics[0]).T)[:, :, :3]
+        depth_world *= 0.001
+        depth_mask = np.logical_and(depth_world[:, :, 0] > bbox[0], depth_world[:, :, 0] < bbox[2])
+        depth_mask = np.logical_and(depth_mask, depth_world[:, :, 1] > bbox[1])
+        depth_mask = np.logical_and(depth_mask, depth_world[:, :, 1] < bbox[3])
+        depth_mask = np.logical_and(depth_mask, depth_world[:, :, 2] > bbox[4])
+        depth_mask = np.logical_and(depth_mask, depth_world[:, :, 2] < bbox[5])
+        depth_mask = depth_mask.astype(np.uint8)
+        depth_mask = depth_mask * 255
+        depth_mask = Image.fromarray(depth_mask)
+        depth_mask.save('vis/depth_mask.png')
+        import ipdb; ipdb.set_trace()
+
+
+
+
+
+    def tabletop_3in1_query(self):
+        # parse table depth
+        self.parse_table()
+
+        # depth to pcd
+        for camera_index in range(self.n_cameras):
+            depth = np.array(self.depths[camera_index])
+            depth = depth * 0.001
+            cam_param = self.cam_params[camera_index]
+            cam_extrinsic = self.cam_extrinsics[camera_index]
+            fgpcd = self.parse_pcd(depth, cam_param, cam_extrinsic)
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(fgpcd)
+            # filter with bbox
+            pcd = pcd.crop(o3d.geometry.AxisAlignedBoundingBox(min_bound=self.bbox[:3], max_bound=self.bbox[3:]))
+
+        import ipdb; ipdb.set_trace()
         inputs = self.query_processor(text=texts, images=self.rgb_imgs[camera_index], return_tensors="pt").to("cuda", torch.float16)
         generated_ids = self.query_model.generate(**inputs)
         generated_text = self.query_processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
@@ -205,12 +308,3 @@ class MultiviewDataparser:
         # aggr_mask: (H, W)
         return (masks, aggr_mask, text_labels), (boxes, scores, labels)
 
-
-if __name__ == "__main__":
-    args = gen_args()
-    args.device = "cuda:0"
-    data = MultiviewDataparser(args)
-    camera_indices = np.arange(data.n_cameras)
-    for camera_index in camera_indices:
-        gen_text = data.query("List all the objects on the table. Answer:", camera_index)
-        print("gen_text:", gen_text)
