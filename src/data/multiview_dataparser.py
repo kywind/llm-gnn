@@ -43,7 +43,7 @@ class MultiviewDataparser:
             extr_dir = [data_dir + f"camera_{i}/camera_extrinsics.npy" for i in range(n_cameras)]
 
             img_index = 0
-            self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
+            self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png").convert('RGB') for i in range(n_cameras)]
             self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
             self.n_cameras = n_cameras
 
@@ -132,11 +132,11 @@ class MultiviewDataparser:
             print(f"Detected {captions[label.item()]} with confidence {round(score.item(), 3)} at location {box}")
         return boxes, scores, labels
     
-    def segment_gdino(self, obj_list, camera_index):
+    def segment_gdino(self, obj_list, camera_index, box_threshold):
         device = self.device
         text_prompts = [f"{obj}" for obj in obj_list]
         print('segment prompt:', text_prompts)  # things like: ['apple', 'banana', 'orange']
-        boxes, scores, labels = self.detect_gdino(text_prompts, box_thresholds=0.5, camera_index=camera_index)
+        boxes, scores, labels = self.detect_gdino(text_prompts, box_thresholds=box_threshold, camera_index=camera_index)
 
         image = np.array(self.rgb_imgs[camera_index])
         H, W = image.shape[:2]

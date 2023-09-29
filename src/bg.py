@@ -29,12 +29,16 @@ def build_graph(args):
     verbose = False
     skip_query = True
     llm_parse_object = False
-    skip_segment = True
-    skip_material = False
+    skip_segment = False
+    skip_material = True
 
     camera_indices = [0, 1, 2, 3]
-    data_dir = "../data/2023-09-13-15-19-50-765863/"
-    vis_dir = "vis/multiview-tabletop-0/"
+    # data_dir = "../data/2023-09-13-15-19-50-765863/"
+    # vis_dir = "vis/multiview-tabletop-0/"
+    # dataset_name = "d3fields"
+
+    data_dir = "../data/2023-09-12-17-37-14-943844/"
+    vis_dir = "vis/multiview-shoes-0/"
     dataset_name = "d3fields"
 
     # data_dir = "../data/mustard_bottle/"
@@ -83,9 +87,10 @@ def build_graph(args):
         init_parser.del_query_model()
         print('After query, obj_list:', obj_list)
     else:
-        obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
+        # obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
         # obj_list = ['mouse', 'keyboard', 'pen', 'box', 'cup', 'cup mat']
         # obj_list = ['a mustard bottle']
+        obj_list = ['shoe']
         # obj_list = ['camera', 'tripod', 'box', 'camera lens', 'camera body', 'computer mouse', 'computer keyboard', 
         #     'computer monitor', 'computer mouse pad', 'computer', 'remote control', 'mouse', 'keyboard', 'mouse pad', 
         #     'mousepad', 'pen', 'a box', 'coffee mug', 'a cookie', 'phone', 'tablet', 'a mousepad', 'box of cookies', 
@@ -129,6 +134,7 @@ def build_graph(args):
                 segmentation_results, detection_results = init_parser.segment_gdino(
                     obj_list=obj_list_chunk,
                     camera_index=camera_index,
+                    box_threshold=0.5,
                 )
                 if segmentation_results is None: continue
                 masks_chunk, _, text_labels_chunk = segmentation_results
@@ -188,6 +194,9 @@ def build_graph(args):
             material = llm.query(material_prompt)
             material = material.rstrip('.')
             material_dict[obj_name] = material
+    else:
+        for obj_name in obj_list:
+            material_dict[obj_name] = 'rigid'  # debug
 
     import ipdb; ipdb.set_trace()
 
