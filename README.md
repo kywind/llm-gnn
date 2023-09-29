@@ -18,13 +18,17 @@ cd ../..
 ## install PyFleX
 # this follows the instructions in https://github.com/WangYixuan12/dyn-res-pile-manip/
 # ensure docker is installed
+# ensure nvidia-docker is installed. This is by:
+# sudo apt-get install -y nvidia-container-toolkit
+# sudo systemctl restart docker (docker service name can be found by sudo systemctl list-units --type=service | grep -i docker)
 cd third-party
 git clone git@github.com:kywind/PyFleX.git
-conda install pybind11 -c conda-forge
+conda install pybind11 -c conda-forge  # or pip install "pybind11[global]"
 
 CURR_CONDA=$CONDA_DEFAULT_ENV
 CONDA_BASE=$(conda info --base)
 docker pull xingyu/softgym
+# make sure ${PWD}/PyFleX is the pyflex root path when re-compiling
 docker run \
     -v ${PWD}/PyFleX:/workspace/PyFleX \
     -v ${CONDA_PREFIX}:/workspace/anaconda \
