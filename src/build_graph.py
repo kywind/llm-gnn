@@ -32,21 +32,21 @@ def build_graph(args):
     args.device = device
 
     ## configs
-    visualize = False
+    visualize = True
     verbose = False
     blip_query = False
     ram_query = False
-    skip_segment = False
+    skip_segment = True
 
     camera_indices = [0, 1, 2, 3]
 
-    # data_dir = "../data/2023-09-13-15-19-50-765863/"
-    # vis_dir = "vis/multiview-0-debug/"
-    # dataset_name = "d3fields"
+    data_dir = "../data/2023-09-13-15-19-50-765863/"
+    vis_dir = "vis/multiview-0-debug/"
+    dataset_name = "d3fields"
 
-    data_dir = "../data/mustard_bottle/"
-    vis_dir = "vis/multiview-ycb-0/"
-    dataset_name = "ycb-flex"
+    # data_dir = "../data/mustard_bottle/"
+    # vis_dir = "vis/multiview-ycb-0/"
+    # dataset_name = "ycb-flex"
 
     if skip_segment:
         assert os.path.exists(vis_dir), "vis_dir does not exist"

@@ -424,10 +424,13 @@ class MultiviewParticleDataset:
         # sample particles from mesh with poisson disk sampling
         particle_pcds = []
         color_map = label_colormap() / 255.0
+        particle_r = 0.02
         for i in range(len(meshes)):
-            pcd = meshes[i].sample_points_poisson_disk(self.particle_num)
+            surface_area = meshes[i].get_surface_area()
+            particle_num = int(surface_area * 0.5 / (particle_r ** 2))
+            pcd = meshes[i].sample_points_poisson_disk(particle_num)  # adaptive sampling
             particle_pcds.append(pcd)
-            pcd.paint_uniform_color(color_map[i])
+            pcd.paint_uniform_color(color_map[i * 2])
             if self.visualize:
                 visualize_o3d([pcd], title="sampled pcd_{}".format(i))
         if self.visualize:
