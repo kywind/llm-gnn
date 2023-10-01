@@ -11,6 +11,7 @@ from gnn.utils import set_seed
 
 from data.multiview_dataparser import MultiviewDataparser
 from data.multiview_dataset import MultiviewParticleDataset
+from data.utils import opengl2cam, cam2opengl
 from llm.llm import LLM
 import open3d as o3d
 
@@ -25,36 +26,44 @@ def build_graph(args):
     args.device = device
 
     ## configs
-    visualize = False
-    verbose = False
-    skip_query = True
+    visualize = True
+    verbose = True
+    save = True
+
+    query = False
     llm_parse_object = False
-    skip_segment = False
-    skip_material = True
+    segment = False
+    llm_parse_material = False
 
     camera_indices = [0, 1, 2, 3]
     # data_dir = "../data/2023-09-13-15-19-50-765863/"
     # vis_dir = "vis/multiview-tabletop-0/"
     # dataset_name = "d3fields"
 
+    # data_dir = "../data/2023-09-12-17-37-14-943844/"
+    # vis_dir = "vis/multiview-shoes-0/"
+    # dataset_name = "d3fields"
+    # img_index = 0
+
     data_dir = "../data/2023-09-12-17-37-14-943844/"
-    vis_dir = "vis/multiview-shoes-0/"
+    vis_dir = "vis/multiview-shoes-1/"
     dataset_name = "d3fields"
+    img_index = 1000
 
     # data_dir = "../data/mustard_bottle/"
     # vis_dir = "vis/multiview-ycb-0/"
     # dataset_name = "ycb-flex"
 
-    if skip_segment:
+    if not segment:
         assert os.path.exists(vis_dir), "vis_dir does not exist"
         assert os.path.exists(os.path.join(vis_dir, 'mask_0_0.png')), "mask_0_0.png does not exist"
     os.makedirs(vis_dir, exist_ok=True)
 
     # initial dataparser
-    init_parser = MultiviewDataparser(args, data_dir, dataset_name)
+    init_parser = MultiviewDataparser(args, data_dir, dataset_name, img_index)
     llm = LLM(args)
 
-    if not skip_query:
+    if query:
         init_parser.prepare_query_model()
         obj_list = []
         obj_dict = {}
@@ -123,7 +132,7 @@ def build_graph(args):
     mask_list = []
     text_labels_list = []
 
-    if not skip_segment:
+    if segment:
         for camera_index in camera_indices:
             masks = []
             text_labels = []
@@ -147,9 +156,10 @@ def build_graph(args):
 
             for i in range(masks.shape[0]):
                 mask = (masks[i] * 255).astype(np.uint8)
-                cv2.imwrite(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)), mask)
-                with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'w') as f:
-                    f.write(text_labels[i])
+                if save:
+                    cv2.imwrite(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)), mask)
+                    with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'w') as f:
+                        f.write(text_labels[i])
             
             mask_list.append(masks)
             text_labels_list.append(text_labels)
@@ -173,7 +183,7 @@ def build_graph(args):
     # import ipdb; ipdb.set_trace()
 
     material_dict = {}
-    if not skip_material:
+    if llm_parse_material:
         for obj_name in obj_list:
             material_prompt = " ".join([
                 "Classify the objects in the image as rigid objects, granular objects, deformable objects, or rope.",
@@ -198,7 +208,12 @@ def build_graph(args):
         for obj_name in obj_list:
             material_dict[obj_name] = 'rigid'  # debug
 
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
+
+    # set model
+    model, model_loss = gen_model(args, material_dict)
+    model.eval()
+    model = model.to(device)
 
     # set dataset
     cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
@@ -214,59 +229,113 @@ def build_graph(args):
         vis_dir=vis_dir,
         visualize=visualize,
         verbose=verbose,
+        save=save,
     )
 
-    import ipdb; ipdb.set_trace()
-
-    # set gnn model
-    model, model_loss = gen_model(args, material_dict)
-    model.eval()
-    model = model.to(device)
-
-    data.generate_relation()
-    data.get_grouping()
+    # import ipdb; ipdb.set_trace()
 
     # visualize the particles on the image
-    draw_particles(data, os.path.join(vis_dir, 'test_graph.png'))
+    if save: draw_particles(data, vis_dir)
+
+    # visualize the relations in open3d
+    if visualize: draw_relations(data)
  
 
-def draw_particles(data, save_path):
-    state = data.state
+def draw_particles(data, vis_dir):
+    state = data.state  # max: array([ 1.19153182,  0.99991735, -1.20326192]), min: array([-1.21615312, -1.22136432, -1.56595011])
     particle_num = state.shape[0]
     attrs = data.attrs
     Rr = data.Rr
     Rs = data.Rs
-    action = data.action
+    rel_attrs = data.rel_attrs
+    # action = data.action
     cam_params = data.cam_params
     cam_extrinsics = data.cam_extrinsics
 
-    # PIL to cv2
-    img = np.array(data.image)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    img_orig = img.copy()
+    for cam_idx in range(len(data.rgbs)):
+        # PIL to cv2
+        img = np.array(data.rgbs[cam_idx])
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img_orig = img.copy()
 
-    def pts_to_xy(pts):
-        # pts: [N, 3]
-        fx, fy, cx, cy = cam_params
-        xy = np.zeros((pts.shape[0], 3))
-        xy[:, 0] = pts[:, 0] * fx / pts[:, 2] + cx
-        xy[:, 1] = pts[:, 1] * fy / pts[:, 2] + cy
-        return xy
-    
-    state_xy = pts_to_xy(state)
-    for i in range(particle_num):
-        # green points
-        cv2.circle(img, (int(state_xy[i, 0]), int(state_xy[i, 1])), 3, (0, 255, 0), -1)
-    
+        def pts_to_xy(pts):
+            # pts: [N, 3]
+            fx, fy, cx, cy = cam_params[cam_idx]
+            xy = np.zeros((pts.shape[0], 2))
+            xy[:, 0] = pts[:, 0] * fx / pts[:, 2] + cx
+            xy[:, 1] = pts[:, 1] * fy / pts[:, 2] + cy
+            return xy
+        # import ipdb; ipdb.set_trace()
+
+        def world_to_cam(pts):
+            # pts: [N, 3]
+            pts_h = np.hstack((pts, np.ones((pts.shape[0], 1))))
+            pts = np.matmul(pts_h, cam_extrinsics[cam_idx].T)[:, :3]
+            return pts
+
+        state_cam = world_to_cam(state)
+        # state_cam = opengl2cam(state, cam_extrinsics[cam_idx])
+        # import ipdb; ipdb.set_trace()
+        state_xy = pts_to_xy(state_cam)
+        for i in range(particle_num):
+            # green points
+            cv2.circle(img, (int(state_xy[i, 0]), int(state_xy[i, 1])), 3, (0, 255, 0), -1)
+        
+        # import ipdb; ipdb.set_trace()
+        for i in range(Rs.shape[0]):
+            # red lines
+            assert Rs[i].sum() == 1
+            assert Rr[i].sum() == 1
+            idx1 = Rs[i].argmax()
+            idx2 = Rr[i].argmax()
+            intra_rel = (rel_attrs[i, 0] == 0)
+            inter_rel = (rel_attrs[i, 0] == 1)
+            assert intra_rel != inter_rel
+            # import ipdb; ipdb.set_trace()
+            if intra_rel:  # red
+                cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 1)
+            else:  # yellow
+                cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 255, 255), 1)
+            
+        # save image
+        img_save = np.concatenate([img_orig, img], axis=1)
+        cv2.imwrite(os.path.join(vis_dir, f'test_graph_{cam_idx}.png'), img_save)
+
+
+def draw_relations(data):
+    state = data.state  # max: array([ 1.19153182,  0.99991735, -1.20326192]), min: array([-1.21615312, -1.22136432, -1.56595011])
+    particle_num = state.shape[0]
+    attrs = data.attrs
+    Rr = data.Rr
+    Rs = data.Rs
+    rel_attrs = data.rel_attrs
+    # action = data.action
+    cam_params = data.cam_params
+    cam_extrinsics = data.cam_extrinsics
+
+    # generate lines of shape (n_rel, 2)
+    lines = []
+    line_colors = []
     for i in range(Rs.shape[0]):
-        # red lines
         assert Rs[i].sum() == 1
+        assert Rr[i].sum() == 1
         idx1 = Rs[i].argmax()
         idx2 = Rr[i].argmax()
-        cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 1)
-    # save image
-    img_save = np.concatenate([img_orig, img], axis=1)
-    cv2.imwrite(save_path, img_save)
+        lines.append([idx1, idx2])
+        intra_rel = (rel_attrs[i, 0] == 0)
+        inter_rel = (rel_attrs[i, 0] == 1)
+        assert intra_rel != inter_rel
+        if intra_rel:
+            line_colors.append([1, 0, 0])
+        else:
+            line_colors.append([1, 1, 0])
+    lines = np.array(lines)
+
+    rels = o3d.geometry.LineSet()
+    rels.points = o3d.utility.Vector3dVector(state)
+    rels.lines = o3d.utility.Vector2iVector(lines)
+    rels.colors = o3d.utility.Vector3dVector(line_colors)
+    o3d.visualization.draw_geometries([rels])
 
 
 if __name__ == '__main__':

@@ -9,14 +9,14 @@ import pymeshfix
 import trimesh
 
 from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
-        opengl2cam, depth2fgpcd, pcd2pix, find_relations_neighbor, label_colormap
+        opengl2cam, cam2opengl, depth2fgpcd, pcd2pix, find_relations_neighbor, label_colormap
 
 from visualize import visualize_o3d
 
 class MultiviewParticleDataset:
 
-    def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, 
-            text_labels_list=None, material_dict=None, vis_dir=None, visualize=False, verbose=False):
+    def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, text_labels_list=None, 
+            material_dict=None, vis_dir=None, visualize=False, verbose=False, save=False):
         self.args = args
         self.depths = depths  # list of PIL depth images
         self.masks = masks  # list of masks
@@ -27,11 +27,13 @@ class MultiviewParticleDataset:
 
         # self.global_scale = 24
         # self.depth_thres = 0.599 / 0.8
-        self.particle_num = 50
-        self.adj_thresh = 0.1
+        # self.particle_num = 50
+        self.adj_thresh = 0.02
+        self.num_max_rel = 7  # maximum number of relations per particle
         self.vis_dir = vis_dir
         self.visualize = visualize
         self.verbose = verbose
+        self.save = save
 
         self.n_cameras = len(self.depths)
 
@@ -40,6 +42,15 @@ class MultiviewParticleDataset:
 
         # remove outliers based on table plane (RANSAC)
         pcds = self.remove_outliers(pcds)
+
+        # points_list = []
+        # for i in range(self.n_cameras):
+        #     for j in range(len(pcds[i])):
+        #         pcd = pcds[i][j]
+        #         if pcd is None: continue
+        #         points_list.append(np.array(pcd.points))
+        # points = np.vstack(points_list)
+        # print("points min, max: {}, {}".format(points.min(0), points.max(0)))
 
         # find corresponding objects in different views
         global_pcds, global_labels, global_ids = self.pcd_grouping(pcds)
@@ -50,8 +61,7 @@ class MultiviewParticleDataset:
         # merge invisible points to reduce ovelapping effects
         # objs = self.remove_invisible_points(objs)
 
-        save_pcd = True
-        if save_pcd:
+        if save:
             self.save_view_pcd(pcds)
             self.save_global_pcd(objs, global_labels)
 
@@ -63,6 +73,29 @@ class MultiviewParticleDataset:
 
         # sampling particles
         particle_pcds = self.sample_particles_from_mesh(meshes)
+
+
+        # generate attributes
+        # n_types = len(set(self.labels)) + 1  # including robot end effector
+        self.particle_num = sum([np.array(pcd.points).shape[0] for pcd in particle_pcds])
+        attrs = np.zeros((self.particle_num, args.attr_dim), dtype=np.float32) # [particle_num, attr_dim]
+        # import ipdb; ipdb.set_trace()
+
+        # generate relations
+        Rr, Rs, rel_attrs = self.generate_relation(particle_pcds)
+        if verbose: print("Rr shape: {}, Rs shape: {}".format(Rr.shape, Rs.shape))
+        # import ipdb; ipdb.set_trace()
+        
+        # generate state
+        state = np.vstack([np.array(pcd.points) for pcd in particle_pcds])
+        if verbose: print("state shape: {}".format(state.shape))
+
+        self.state = state
+        self.attrs = attrs
+        self.Rr = Rr
+        self.Rs = Rs
+        self.rel_attrs = rel_attrs
+
 
     def depth_to_pcd(self):
         pcd_list_all = []
@@ -288,14 +321,16 @@ class MultiviewParticleDataset:
         n_obj = len(objs)
         for i in range(n_obj):
             obj = objs[i]
-            o3d.io.write_point_cloud(
-                os.path.join(self.vis_dir, "obj_{}.pcd".format(i)), obj)
-            if self.visualize:
-                visualize_o3d([obj], title="obj_{} ({})".format(i, global_label_list[i]))
+            if self.save:
+                o3d.io.write_point_cloud(
+                    os.path.join(self.vis_dir, "obj_{}.pcd".format(i)), obj)
+            # if self.visualize:
+            #     visualize_o3d([obj], title="obj_{} ({})".format(i, global_label_list[i]))
 
             # save object text label
-            with open(os.path.join(self.vis_dir, "obj_label_{}.txt".format(i)), "w") as f:
-                f.write(global_label_list[i])
+            if self.save:
+                with open(os.path.join(self.vis_dir, "obj_label_{}.txt".format(i)), "w") as f:
+                    f.write(global_label_list[i])
 
         # save global pcd
         global_pcd_o3d = o3d.geometry.PointCloud()
@@ -303,8 +338,9 @@ class MultiviewParticleDataset:
             obj = objs[i]
             if obj is None: continue
             global_pcd_o3d += obj
-        o3d.io.write_point_cloud(
-            os.path.join(self.vis_dir, "global_pcd.pcd"), global_pcd_o3d)
+        if self.save:
+            o3d.io.write_point_cloud(
+                os.path.join(self.vis_dir, "global_pcd.pcd"), global_pcd_o3d)
         if self.visualize:
             visualize_o3d([global_pcd_o3d], title="global_pcd_o3d")
         print("saved {} objects".format(n_obj))
@@ -345,6 +381,10 @@ class MultiviewParticleDataset:
             # to world frame
             fgpcd = np.hstack((fgpcd, np.ones((fgpcd.shape[0], 1))))
             fgpcd = np.matmul(fgpcd, np.linalg.inv(cam_extrinsic).T)[:, :3]
+
+            # to world frame (opengl)
+            # import ipdb; ipdb.set_trace()
+            # fgpcd = cam2opengl(fgpcd, cam_extrinsic)
 
             pcd_list.append(fgpcd)
             pcd_rgb_list.append(fgpcd_color)
@@ -411,11 +451,12 @@ class MultiviewParticleDataset:
 
             mesh.compute_vertex_normals()
             mesh.compute_triangle_normals()
-            o3d.io.write_triangle_mesh(
-                os.path.join(self.vis_dir, "obj_{}.ply".format(i)), mesh)
+            if self.save:
+                o3d.io.write_triangle_mesh(
+                    os.path.join(self.vis_dir, "obj_{}.ply".format(i)), mesh)
             all_meshes.append(mesh)
-            if self.visualize:
-                visualize_o3d([mesh], title="mesh_{}".format(i))
+            # if self.visualize:
+            #     visualize_o3d([mesh], title="mesh_{}".format(i))
         if self.visualize:
             visualize_o3d(all_meshes, title="all_meshes")
         return all_meshes
@@ -424,36 +465,20 @@ class MultiviewParticleDataset:
         # sample particles from mesh with poisson disk sampling
         particle_pcds = []
         color_map = label_colormap() / 255.0
-        particle_r = 0.02
+        particle_r = self.adj_thresh
         for i in range(len(meshes)):
             surface_area = meshes[i].get_surface_area()
             particle_num = int(surface_area * 0.5 / (particle_r ** 2))
             pcd = meshes[i].sample_points_poisson_disk(particle_num)  # adaptive sampling
             particle_pcds.append(pcd)
             pcd.paint_uniform_color(color_map[i * 2])
-            if self.visualize:
-                visualize_o3d([pcd], title="sampled pcd_{}".format(i))
+            # if self.visualize:
+            #     visualize_o3d([pcd], title="sampled pcd_{}".format(i))
         if self.visualize:
             visualize_o3d(particle_pcds, title="sampled pcds")
         return particle_pcds
 
     ### legacy functions ###
-
-    def update(self, state):
-        self.history_states.append(self.state.copy())
-        self.state = state
-
-    def get_grouping(self):
-        n_instance = np.unique(self.pcd_label).shape[0]
-        n_p = self.particle_num * n_instance
-        p_instance = torch.ones((1, n_p, n_instance), dtype=torch.float32) # the group each particle belongs to
-        p_rigid = torch.zeros((1, n_instance), dtype=torch.float32) # the rigidness of each group
-
-        # for i in range(n_instance):
-        #     # import ipdb; ipdb.set_trace()
-        #     p_instance[0, :, i] = torch.tensor((self.pcd_label[:, 0] == i).astype(np.float32))
-
-        return n_p, n_instance, p_instance, p_rigid
 
     def subsample(self, pcd, particle_num=None, particle_r=None, particle_den=None):
         if particle_num is not None:
@@ -471,45 +496,134 @@ class MultiviewParticleDataset:
         sampled_pts = recenter(pcd, sampled_pts, r = min(0.02, 0.5 * particle_r)) # [particle_num, 3]
         return sampled_pts, particle_num, particle_r, particle_den
 
-    def generate_relation(self):
-        args = self.args
-        B = 1
-        N = self.particle_num * self.n_instance
-        rels = []
+    def generate_relation(self, particle_pcds):
+        Rs_list = []
+        Rr_list = []
+        n_points_list = []
+        n_rels_list = []
 
-        s_cur = torch.tensor(self.state).unsqueeze(0)
-        s_delta = torch.tensor(self.action).unsqueeze(0)
+        for pcd in particle_pcds:
+            s_cur = torch.tensor(np.asarray(pcd.points))
+            s_delta = torch.zeros_like(s_cur)
+            n_points = s_cur.shape[0]
 
-        # s_receiv, s_sender: B x particle_num x particle_num x 3
-        s_receiv = (s_cur + s_delta)[:, :, None, :].repeat(1, 1, N, 1)
-        s_sender = (s_cur + s_delta)[:, None, :, :].repeat(1, N, 1, 1)
+            # s_receiv, s_sender: particle_num x particle_num x 3
+            s_receiv = (s_cur + s_delta)[:, None, :].repeat(1, n_points, 1)
+            s_sender = (s_cur + s_delta)[None, :, :].repeat(n_points, 1, 1)
 
-        # dis: B x particle_num x particle_num
-        # adj_matrix: B x particle_num x particle_num
-        threshold = self.adj_thresh * self.adj_thresh
-        dis = torch.sum((s_sender - s_receiv)**2, -1)
-        max_rel = min(10, N)
-        topk_res = torch.topk(dis, k=max_rel, dim=2, largest=False)
-        topk_idx = topk_res.indices
-        topk_bin_mat = torch.zeros_like(dis, dtype=torch.float32)
-        topk_bin_mat.scatter_(2, topk_idx, 1)
-        adj_matrix = ((dis - threshold) < 0).float()
-        adj_matrix = adj_matrix * topk_bin_mat
+            # dis: particle_num x particle_num
+            # adj_matrix: particle_num x particle_num
+            threshold = (2.5 * self.adj_thresh) ** 2
+            dis = torch.sum((s_sender - s_receiv) ** 2, -1)
+            max_rel = min(self.num_max_rel, n_points)
+            topk_res = torch.topk(dis, k=max_rel, dim=1, largest=False)
+            topk_idx = topk_res.indices
+            topk_bin_mat = torch.zeros_like(dis, dtype=torch.float32)  # particle_num x particle_num
+            topk_bin_mat.scatter_(1, topk_idx, 1)
+            adj_matrix = ((dis - threshold) < 0).float()  # particle_num x particle_num
+            adj_matrix = adj_matrix * topk_bin_mat
 
-        n_rels = adj_matrix.sum(dim=(1,2))
-        n_rel = n_rels.max().long().item()
-        rels_idx = []
-        rels_idx = [torch.arange(n_rels[i]) for i in range(B)]
-        rels_idx = torch.hstack(rels_idx).to(dtype=torch.long)
-        rels = adj_matrix.nonzero()
-        Rr = torch.zeros((B, n_rel, N), dtype=s_cur.dtype)
-        Rs = torch.zeros((B, n_rel, N), dtype=s_cur.dtype)
-        Rr[rels[:, 0], rels_idx, rels[:, 1]] = 1  # batch_idx, rel_idx, receiver_particle_idx
-        Rs[rels[:, 0], rels_idx, rels[:, 2]] = 1  # batch_idx, rel_idx, sender_particle_idx
+            # remove self relations
+            anti_self = torch.ones_like(adj_matrix) - torch.eye(n_points)
+            adj_matrix = adj_matrix * anti_self
 
-        self.Rr = Rr.squeeze(0).numpy() # n_rel, n_particle
-        self.Rs = Rs.squeeze(0).numpy() # n_rel, n_particle
-        return self.Rr, self.Rs
+            # import ipdb; ipdb.set_trace()
+            n_rel = adj_matrix.sum().long().item()
+            rels_idx = torch.arange(n_rel).to(dtype=torch.long)
+            rels = adj_matrix.nonzero()
+            Rr = torch.zeros((n_rel, n_points), dtype=s_cur.dtype)
+            Rs = torch.zeros((n_rel, n_points), dtype=s_cur.dtype)
+            # import ipdb; ipdb.set_trace()
+            Rr[rels_idx, rels[:, 0]] = 1  # el_idx, receiver_particle_idx
+            Rs[rels_idx, rels[:, 1]] = 1  # el_idx, sender_particle_idx
+
+            Rr = Rr.numpy() # n_rel, n_particle
+            Rs = Rs.numpy() # n_rel, n_particle
+
+            Rs_list.append(Rs)
+            Rr_list.append(Rr)
+            n_points_list.append(n_points)
+            n_rels_list.append(n_rel)
+        
+        n_points_cum = np.cumsum(np.array([0] + n_points_list))
+        n_rels_cum = np.cumsum(np.array([0] + n_rels_list))
+        
+        # print(n_points_cum)
+        # print(n_rels_cum)
+        # import ipdb; ipdb.set_trace()
+        Rs_all = np.zeros((n_rels_cum[-1], n_points_cum[-1]), dtype=np.float32)
+        Rr_all = np.zeros((n_rels_cum[-1], n_points_cum[-1]), dtype=np.float32)
+
+        for i in range(len(Rs_list)):
+            Rs_all[n_rels_cum[i]:n_rels_cum[i+1], n_points_cum[i]:n_points_cum[i+1]] = Rs_list[i]
+            Rr_all[n_rels_cum[i]:n_rels_cum[i+1], n_points_cum[i]:n_points_cum[i+1]] = Rr_list[i]
+        
+        Rs_list = []
+        Rr_list = []
+        n_rels_list = []
+
+        # generate cross-object relations (Rr abd Rs will have shape n_rel x n_particle_all)
+        # import ipdb; ipdb.set_trace()
+        for i in range(len(particle_pcds)):  # receiver
+            pcd = particle_pcds[i]
+            s_cur = torch.tensor(np.asarray(pcd.points))  # n_points x 3
+            s_delta = torch.zeros_like(s_cur)
+            n_points = s_cur.shape[0]
+            for j in range(i+1, len(particle_pcds)):  # sender
+                pcd_dist = np.asarray(pcd.compute_point_cloud_distance(particle_pcds[j]))
+                if pcd_dist.min() > self.adj_thresh:
+                    # Rs = np.zeros((0, n_points), dtype=s_cur.dtype)
+                    # Rr = np.zeros((0, n_points), dtype=s_cur.dtype)
+                    continue
+                pcd2 = particle_pcds[j]
+                s_cur2 = torch.tensor(pcd2.points)  # n_points x 3
+                s_delta2 = torch.zeros_like(s_cur2)
+                n_points2 = s_cur2.shape[0]
+                r = (s_cur + s_delta)[:, None, :].repeat(1, n_points2, 1)  # n_points x n_points2 x 3
+                s = (s_cur2 + s_delta2)[None, :, :].repeat(n_points, 1, 1)  # n_points x n_points2 x 3
+                dis = torch.sum((r - s)**2, -1)  # n_points x n_points2
+
+                threshold = self.adj_thresh * self.adj_thresh * 4
+                max_rel = min(self.num_max_rel, min(n_points, n_points2))  # 5
+                topk_res = torch.topk(dis, k=max_rel, dim=1, largest=False)  # n_points x max_rel
+                topk_idx = topk_res.indices  # n_points x max_rel
+                topk_bin_mat = torch.zeros_like(dis, dtype=torch.float32)  # n_points x n_points2
+                topk_bin_mat.scatter_(1, topk_idx, 1)  # n_points x n_points2
+                adj_matrix = ((dis - threshold) < 0).float()  # n_points x n_points2
+                adj_matrix = adj_matrix * topk_bin_mat  # n_points x n_points2
+
+                n_rel = adj_matrix.sum().long().item()
+                rels_idx = torch.arange(n_rel).to(dtype=torch.long)
+                rels = adj_matrix.nonzero()  # n_rel x 3, [receiver_idx, sender_idx]
+                Rr = torch.zeros((n_rel, n_points_cum[-1]), dtype=s_cur.dtype)
+                Rs = torch.zeros((n_rel, n_points_cum[-1]), dtype=s_cur.dtype)
+                Rr[rels_idx, rels[:, 0] + n_points_cum[i]] = 1  # rel_idx, receiver_particle_idx
+                Rs[rels_idx, rels[:, 1] + n_points_cum[j]] = 1  # rel_idx, sender_particle_idx
+
+                Rr = Rr.numpy() # n_rel, n_particle
+                Rs = Rs.numpy() # n_rel, n_particle
+
+                Rs_list.append(Rs)
+                Rr_list.append(Rr)
+                n_rels_list.append(n_rel)
+
+        n_rels_cum = np.cumsum(np.array([0] + n_rels_list))
+        Rs_all_inter = np.zeros((n_rels_cum[-1], n_points_cum[-1]), dtype=np.float32)
+        Rr_all_inter = np.zeros((n_rels_cum[-1], n_points_cum[-1]), dtype=np.float32)
+
+        for i in range(len(Rs_list)):
+            Rs_all_inter[n_rels_cum[i]:n_rels_cum[i+1], :] = Rs_list[i]
+            Rr_all_inter[n_rels_cum[i]:n_rels_cum[i+1], :] = Rr_list[i]
+
+        Rs = np.concatenate([Rs_all, Rs_all_inter], axis=0)
+        Rr = np.concatenate([Rr_all, Rr_all_inter], axis=0)
+
+        rel_attrs = np.zeros((Rs.shape[0], 1), dtype=np.float32)
+        rel_attrs[:Rs_all.shape[0], 0] = 0.0  # intra-object relations
+        rel_attrs[Rs_all.shape[0]:, 0] = 1.0  # inter-object relations
+
+        # import ipdb; ipdb.set_trace()
+        return Rr, Rs, rel_attrs
 
     def parse_action(self, action):
         # action: [start_x, start_y, end_x, end_y]

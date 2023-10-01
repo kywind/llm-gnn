@@ -31,7 +31,7 @@ class MultiviewDataparser:
     fusing depth from multiview images
     """
 
-    def __init__(self, args, data_dir, dataset_name):
+    def __init__(self, args, data_dir, dataset_name, img_index=0):
         self.args = args
         self.device = args.device
 
@@ -42,7 +42,6 @@ class MultiviewDataparser:
             intr_dir = [data_dir + f"camera_{i}/camera_params.npy" for i in range(n_cameras)]
             extr_dir = [data_dir + f"camera_{i}/camera_extrinsics.npy" for i in range(n_cameras)]
 
-            img_index = 0
             self.rgb_imgs = [Image.open(rgb_dir[i] + f"/{img_index}.png").convert('RGB') for i in range(n_cameras)]
             self.depth_imgs = [Image.open(depth_dir[i] + f"/{img_index}.png") for i in range(n_cameras)]
             self.n_cameras = n_cameras

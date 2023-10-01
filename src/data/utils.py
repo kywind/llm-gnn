@@ -499,7 +499,7 @@ def recenter(pcd, sampled_pcd, r = 0.02):
         recenter_sampled_pcd[i] = pcd[dist[:, i] < r].mean(axis=0)
     return recenter_sampled_pcd
 
-def opengl2cam(pcd, cam_extrinsic, global_scale):
+def opengl2cam(pcd, cam_extrinsic, global_scale=1):
     opencv_T_opengl = np.array([[1, 0, 0, 0],
                                 [0, -1, 0, 0],
                                 [0, 0, -1, 0],
@@ -510,6 +510,16 @@ def opengl2cam(pcd, cam_extrinsic, global_scale):
     # print('cam', cam)
     # print()
     return cam
+
+def cam2opengl(pcd, cam_extrinsic, global_scale=1):
+    opencv_T_opengl = np.array([[1, 0, 0, 0],
+                                [0, -1, 0, 0],
+                                [0, 0, -1, 0],
+                                [0, 0, 0, 1]])
+    opencv_T_world = np.matmul(np.linalg.inv(cam_extrinsic), opencv_T_opengl)
+    opengl = np.matmul(opencv_T_world, np.concatenate([pcd, np.ones((pcd.shape[0], 1))], axis=1).T).T[:, :3] * global_scale
+    return opengl
+
 
 def depth2fgpcd(depth, mask, cam_params):
     # depth: (h, w)
