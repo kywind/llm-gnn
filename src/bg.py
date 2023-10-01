@@ -211,7 +211,7 @@ def build_graph(args):
     # import ipdb; ipdb.set_trace()
 
     # set model
-    model, model_loss = gen_model(args, material_dict)
+    model, model_loss = gen_model(args, material_dict, verbose=verbose)
     model.eval()
     model = model.to(device)
 
@@ -242,7 +242,7 @@ def build_graph(args):
  
 
 def draw_particles(data, vis_dir):
-    state = data.state  # max: array([ 1.19153182,  0.99991735, -1.20326192]), min: array([-1.21615312, -1.22136432, -1.56595011])
+    state = data.state
     particle_num = state.shape[0]
     attrs = data.attrs
     Rr = data.Rr
@@ -265,7 +265,6 @@ def draw_particles(data, vis_dir):
             xy[:, 0] = pts[:, 0] * fx / pts[:, 2] + cx
             xy[:, 1] = pts[:, 1] * fy / pts[:, 2] + cy
             return xy
-        # import ipdb; ipdb.set_trace()
 
         def world_to_cam(pts):
             # pts: [N, 3]
@@ -291,7 +290,6 @@ def draw_particles(data, vis_dir):
             intra_rel = (rel_attrs[i, 0] == 0)
             inter_rel = (rel_attrs[i, 0] == 1)
             assert intra_rel != inter_rel
-            # import ipdb; ipdb.set_trace()
             if intra_rel:  # red
                 cv2.line(img, (int(state_xy[idx1, 0]), int(state_xy[idx1, 1])), (int(state_xy[idx2, 0]), int(state_xy[idx2, 1])), (0, 0, 255), 1)
             else:  # yellow

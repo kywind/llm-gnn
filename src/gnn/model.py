@@ -67,7 +67,7 @@ class ParticlePredictor(nn.Module):
 
 
 class DynamicsPredictor(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, verbose=False, **kwargs):
 
         super(DynamicsPredictor, self).__init__()
 
@@ -79,84 +79,24 @@ class DynamicsPredictor(nn.Module):
 
         self.quat_offset = torch.FloatTensor([1., 0., 0., 0.]).to(args.device)
 
+        self.dt = torch.FloatTensor([args.dt]).to(args.device)
+        self.mean_p = torch.FloatTensor(args.mean_p).to(args.device)
+        self.std_p = torch.FloatTensor(args.std_p).to(args.device)
+        self.mean_d = torch.FloatTensor(args.mean_d).to(args.device)
+        self.std_d = torch.FloatTensor(args.std_d).to(args.device)
+
         # ParticleEncoder
-        if args.material == 'deformable':
-            self.n_his = args.n_his  # default: n_his = 4
-            self.attr_dim = args.attr_dim  # default: attr_dim = 3
-            self.phys_dim = 1
-            self.density_dim = 0
-            self.state_dim = args.state_dim  # default: state_dim = 3
-            self.offset_dim = self.state_dim  # default: offset_dim = 3 (x, y, z)
-            self.action_dim = args.action_dim  # default: 0
-            self.mem_dim = args.nf_effect * args.mem_nlayer  # default: mem_nlayer = 2
-            self.state_normalize = True
-
-        elif args.material == 'granular':
-            self.n_his = args.n_his  # default: 1
-            self.attr_dim = 1  # default: 1
-            self.phys_dim = 0
-            self.density_dim = 1  # particle density, default = 1
-            self.state_dim = args.state_dim  # defualt: 0
-            self.offset_dim = 0
-            self.action_dim = args.action_dim  # pusher movement xyz
-            self.mem_dim = 0
-            self.state_normalize = False
-
-        elif args.material in ['rigid', 'multi-rigid']:
-            self.attr_dim = args.attr_dim  # default: 2 (movable, fixed)
-            self.n_his = args.n_his  # default: 4 (use_history) or 1 (no history, use velocity)
-            self.state_dim = args.state_dim  # default: 2/3 or 4/6 (with velocity)
-            self.offset_dim = args.state_dim
-            self.mem_dim = args.nf_effect * args.mem_nlayer  # default: mem_nlayer = 2 or 0
-            self.action_dim = args.action_dim  # default: 2/3 or 0
-            self.phys_dim = 1
-            self.density_dim = 0
-
-        elif args.material == 'rope':
-            self.attr_dim = args.attr_dim
-            self.state_dim = args.state_dim
-            self.action_dim = args.action_dim
-
-        elif args.material == 'cloth':
-            self.attr_dim = args.attr_dim
-            self.state_dim = args.state_dim
-            self.action_dim = args.action_dim
-        
-        else:
-            self.attr_dim = None
-            self.state_dim = None
-            ### LLM START ### set particle dimensions
-            ### LLM END ###
-
-        input_dim = self.attr_dim + self.phys_dim + self.density_dim + self.n_his * self.state_dim \
-                + self.n_his * self.offset_dim + self.action_dim + self.mem_dim
+        # args.mem_dim = args.nf_effect * args.mem_nlayer
+        input_dim = args.attr_dim + args.phys_dim + args.density_dim + args.n_his * args.state_dim \
+                + args.n_his * args.offset_dim + args.action_dim # + args.mem_dim
         self.particle_encoder = Encoder(input_dim, self.nf_particle, self.nf_effect)
 
         # RelationEncoder
-        if args.material in ['deformable', 'rigid', 'multi-rigid', 'rope', 'cloth']:
-            self.rel_particle_dim = input_dim
-            self.rel_attr_dim = 0
-            self.rel_group_dim = 1  # sum of difference of group one-hot vector
-            self.rel_distance_dim = 0
-            self.rel_density_dim = 0
-            
-        elif args.material == 'granular':
-            self.rel_particle_dim = 0
-            self.rel_attr_dim = 1  # default: 1
-            self.rel_group_dim = 0
-            self.rel_distance_dim = 3  # difference of sender and receiver position
-            self.rel_density_dim = 1  # same as particle density
-        
-        else:
-            self.rel_particle_dim = None
-            self.rel_attr_dim = None
-            ### LLM START ### set relation dimensions
-            ### LLM END ###
-
-        rel_input_dim = self.rel_particle_dim * 2 + self.rel_attr_dim * 2 \
-                + self.rel_group_dim + self.rel_distance_dim + self.rel_density_dim
+        if args.rel_particle_dim == -1:
+            args.rel_particle_dim = input_dim
+        rel_input_dim = args.rel_particle_dim * 2 + args.rel_attr_dim * 2 \
+                + args.rel_group_dim + args.rel_distance_dim + args.rel_density_dim
         self.relation_encoder = Encoder(rel_input_dim, self.nf_relation, self.nf_effect)
-
 
         # ParticlePropagator
         self.particle_propagator = Propagator(self.nf_effect * 2, self.nf_effect)
@@ -167,19 +107,18 @@ class DynamicsPredictor(nn.Module):
         # which I think is unnecessary since the density is already included in the particle encoder.
 
         # ParticlePredictor
-        if args.material in ['rigid', 'multi-rigid', 'deformable']:
-            self.non_rigid_predictor = None
-            self.rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, 7)
-        elif args.material in ['granular', 'rope', 'cloth']:
-            self.non_rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, self.state_dim)
-            self.rigid_predictor = None
-        elif args.material in ['deformable']:
-            self.non_rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, self.state_dim)
-            self.rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, 7)
+        if kwargs["predict_non_rigid"]:
+            self.non_rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, kwargs["non_rigid_out_dim"])
         else:
-            pass
-            ### LLM START ### set rigid predictor
-            ### LLM END ###
+            self.non_rigid_predictor = None
+        if kwargs["predict_rigid"]:
+            self.rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, kwargs["rigid_out_dim"])
+        
+        if verbose:
+            print("DynamicsPredictor initialized")
+            print("particle input dim: {}, relation input dim: {}".format(input_dim, rel_input_dim))
+            print("non-rigid output dim: {}, rigid output dim: {}".format(kwargs["non_rigid_out_dim"], kwargs["rigid_out_dim"]))
+        
 
     # @profile
     def forward(self, state, attrs, Rr_cur, Rs_cur, p_instance, p_rigid, 
@@ -252,12 +191,11 @@ class DynamicsPredictor(nn.Module):
             # p_inputs: B x N x (attr_dim + 2 * n_his * state_dim)
             p_inputs = torch.cat([p_inputs, offset], 2)
 
-        if memory is not None:
-            # memory_t: B x N x (mem_nlayer * nf_memory)
-            memory_t = memory.transpose(1, 2).contiguous().view(B, N, -1)
-
-            # p_inputs: B x N x (... + mem_nlayer * nf_memory)
-            p_inputs = torch.cat([p_inputs, memory_t], 2)
+        # if memory is not None:
+        #     # memory_t: B x N x (mem_nlayer * nf_memory)
+        #     memory_t = memory.transpose(1, 2).contiguous().view(B, N, -1)
+        #     # p_inputs: B x N x (... + mem_nlayer * nf_memory)
+        #     p_inputs = torch.cat([p_inputs, memory_t], 2)
         
         if physics_param is not None:
             # physics_param: B x N x 1
@@ -469,20 +407,20 @@ class DynamicsPredictor(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, **kwargs):
 
         super(Model, self).__init__()
 
         self.args = args
 
-        self.dt = torch.FloatTensor([args.dt]).to(args.device)
-        self.mean_p = torch.FloatTensor(args.mean_p).to(args.device)
-        self.std_p = torch.FloatTensor(args.std_p).to(args.device)
-        self.mean_d = torch.FloatTensor(args.mean_d).to(args.device)
-        self.std_d = torch.FloatTensor(args.std_d).to(args.device)
+        # self.dt = torch.FloatTensor([args.dt]).to(args.device)
+        # self.mean_p = torch.FloatTensor(args.mean_p).to(args.device)
+        # self.std_p = torch.FloatTensor(args.std_p).to(args.device)
+        # self.mean_d = torch.FloatTensor(args.mean_d).to(args.device)
+        # self.std_d = torch.FloatTensor(args.std_d).to(args.device)
 
         # PropNet to predict forward dynamics
-        self.dynamics_predictor = DynamicsPredictor(args)
+        self.dynamics_predictor = DynamicsPredictor(args, **kwargs)
 
     def init_memory(self, B, N):
         """

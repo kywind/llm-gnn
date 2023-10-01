@@ -1,10 +1,91 @@
 import numpy as np
 import torch
-from gnn.model import Model, EarthMoverLoss, ChamferLoss, HausdorffLoss
+from gnn.model import Model, DynamicsPredictor, EarthMoverLoss, ChamferLoss, HausdorffLoss
 
 
-def gen_model(args, material_dict):
+def gen_model(args, material_dict, verbose=False):
     args.material = 'rigid'  # TODO debug
+
+    # particle encoder and relation encoder
+
+    if args.material == 'granular':
+        # particle encoder
+        args.attr_dim = 1  # single attribute
+        args.n_his = 1  # do not consider history
+        args.state_dim = 0  # no state, use action dim to represent
+        args.offset_dim = 0  # same as state_dim
+        args.action_dim = 3  # delta x, y, z caused by action (long actions)
+        args.pstep = 3
+        args.time_step = 1
+        args.dt = 1. / 60.
+        args.sequence_length = 4
+        args.phys_dim = 1  # density
+        args.density_dim = 1  # particle density
+
+        # relation encoder
+        args.rel_particle_dim = 0  # no particle
+        args.rel_attr_dim = 1  # default: 1
+        args.rel_group_dim = 0  # no group
+        args.rel_distance_dim = 3  # difference of sender and receiver position
+        args.rel_density_dim = 1  # same as particle density
+        
+    elif args.material == 'rigid':
+        # particle encoder
+        args.attr_dim = 1  # single attribute
+        args.n_his = 4  # consider history
+        args.state_dim = 3  # x, y, z
+        args.offset_dim = 3  # same as state_dim
+        args.action_dim = 0  # do not consider action (timestep actions)
+        args.pstep = 3
+        args.time_step = 1
+        args.dt = 1. / 60.
+        args.sequence_length = 4
+        args.phys_dim = 2  # friction, density
+        args.density_dim = 0  # particle density
+
+        # relation encoder
+        args.rel_particle_dim = -1  # input dim
+        args.rel_attr_dim = 0  # no attribute
+        args.rel_group_dim = 1  # sum of difference of group one-hot vector
+        args.rel_distance_dim = 0  # no distance
+        args.rel_density_dim = 0  # no density
+    
+    elif args.material in ['deformable', 'rope', 'cloth']:
+        raise NotImplementedError
+
+    else:
+        pass
+        ### LLM START ### set_arg_dimensions
+        ### LLM END ###
+    
+    kwargs = {}
+
+    if args.material in ['rigid', 'multi-rigid']:
+        kwargs.update({
+            "predict_rigid": True,
+            "predict_non_rigid": False,
+            "rigid_out_dim": 7,
+            "non_rigid_out_dim": 0,
+        })
+    elif args.material in ['granular', 'rope', 'cloth']:
+        kwargs.update({
+            "predict_rigid": False,
+            "predict_non_rigid": True,
+            "rigid_out_dim": 0,
+            "non_rigid_out_dim": args.state_dim,
+        })
+    elif args.material in ['deformable']:
+        kwargs.update({
+            "predict_rigid": True,
+            "predict_non_rigid": True,
+            "rigid_out_dim": 7,
+            "non_rigid_out_dim": args.state_dim,
+        })
+    else:
+        pass
+        ### LLM START ### set rigid predictor
+        ### LLM END ###
+    
 
     if args.material == 'deformable':
         emd_loss = EarthMoverLoss()
@@ -17,61 +98,9 @@ def gen_model(args, material_dict):
         model_loss = [mse_loss]
 
     else:
-        model_loss = []
+        pass
         ### LLM START ### set_loss
         ### LLM END ###
 
-    if args.material == 'granular':
-        args.attr_dim = 1
-        args.n_his = 1
-        args.state_dim = 0
-        args.action_dim = 3
-        args.load_action = True  # long actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 3
-        args.time_step = 1
-        args.dt = 1. / 60.
-        args.sequence_length = 4
-        args.scene_params_dim = 1
-    
-    elif args.material == 'rigid':  # TODO
-        args.attr_dim = 1
-        args.n_his = 1
-        args.state_dim = 3
-        args.action_dim = 3
-        args.load_action = True  # long actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 3
-        args.time_step = 1
-        args.dt = 1. / 60.
-        args.sequence_length = 4
-        args.scene_params_dim = 1
-
-    elif args.material == 'deformable':
-        args.attr_dim = 3
-        args.n_his = 4
-        args.state_dim = 3
-        args.action_dim = 0
-        args.load_action = False  # timestep actions
-        args.nf_particle = 150
-        args.nf_relation = 150
-        args.nf_effect = 150
-        args.pstep = 2
-        args.time_step = 119
-        args.dt = 1. / 60.
-        args.sequence_length = 6
-        args.scene_params_dim = 1
-
-    else:
-        args.attr_dim = None
-        args.n_his = None
-        args.state_dim = None
-        ### LLM START ### set_arg_dimensions
-        ### LLM END ###
-    
-    model = Model(args)
+    model = DynamicsPredictor(args, verbose=verbose, **kwargs)
     return model, model_loss
