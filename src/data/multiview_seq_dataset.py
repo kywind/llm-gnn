@@ -13,16 +13,16 @@ from data.utils import load_yaml, set_seed, fps, fps_rad, recenter, \
 
 from visualize import visualize_o3d
 
-class MultiviewParticleDataset:
+class MultiviewSeqParticleDataset:
 
     def __init__(self, args, depths=None, masks=None, rgbs=None, cams=None, text_labels_list=None, 
-            material_dict=None, vis_dir=None, visualize=False, verbose=False, save=False):
+            material_dict=None, save_dir=None, vis_dir=None):
         self.args = args
-        self.depths = depths  # list of PIL depth images
-        self.masks = masks  # list of masks
-        self.rgbs = rgbs  # list of PIL rgb images
+        self.depths = depths  # list of depth image paths
+        self.masks = masks  # list of mask paths
+        self.rgbs = rgbs  # list of rgb image paths
         self.cam_params, self.cam_extrinsics = cams  # (4,) * n_cameras, (4, 4) * n_cameras
-        self.text_labels = text_labels_list  # list of text labels
+        self.text_labels = text_labels_list  # list of text labels paths
         self.material_dict = material_dict  # dict of {obj_name: material_name}
 
         # self.global_scale = 24
@@ -31,96 +31,112 @@ class MultiviewParticleDataset:
         self.adj_thresh = 0.02
         self.num_max_rel = 7  # maximum number of relations per particle
         self.vis_dir = vis_dir
-        self.visualize = visualize
-        self.verbose = verbose
-        self.save = save
+        self.n_cameras = len(self.depths[0])
 
-        self.n_cameras = len(self.depths)
-
-        # change coordinates to world frame
-        pcds = self.depth_to_pcd()
-
-        # remove outliers based on table plane (RANSAC)
-        pcds = self.remove_outliers(pcds)
-
-        # points_list = []
-        # for i in range(self.n_cameras):
-        #     for j in range(len(pcds[i])):
-        #         pcd = pcds[i][j]
-        #         if pcd is None: continue
-        #         points_list.append(np.array(pcd.points))
-        # points = np.vstack(points_list)
-        # print("points min, max: {}, {}".format(points.min(0), points.max(0)))
-
-        # find corresponding objects in different views
-        global_pcds, global_labels, global_ids = self.pcd_grouping(pcds)
-
-        # merge objects from different views
-        objs = self.merge_views(global_pcds)
-
-        # merge invisible points to reduce ovelapping effects
-        # objs = self.remove_invisible_points(objs)
-
-        # voxel downsample
-        # for i in range(len(objs)):
-        #     objs[i] = objs[i].voxel_down_sample(voxel_size=0.01)
-
-        if save or visualize:
-            self.save_view_pcd(pcds)
-            self.save_global_pcd(objs, global_labels)
-
-        self.objs = objs
-        self.labels = global_labels
-
-        # mesh reconstruction
-        meshes = self.mesh_reconstruction()
-
-        # sampling particles
-        particle_pcds = self.sample_particles_from_mesh(meshes)
-
-
-        # generate attributes
-        # n_types = len(set(self.labels)) + 1  # including robot end effector
-        self.particle_num = sum([np.array(pcd.points).shape[0] for pcd in particle_pcds])
-        attrs = np.zeros((self.particle_num, args.attr_dim), dtype=np.float32) # [particle_num, attr_dim]
-        # import ipdb; ipdb.set_trace()
-
-        # generate relations
-        Rr, Rs, rel_attrs = self.generate_relation(particle_pcds)
-        if verbose: print("Rr shape: {}, Rs shape: {}".format(Rr.shape, Rs.shape))
-        # import ipdb; ipdb.set_trace()
-        
-        # generate state
-        state = np.vstack([np.array(pcd.points) for pcd in particle_pcds])
-        if verbose: print("state shape: {}".format(state.shape))
-
-        self.state = state
-        self.attrs = attrs
-        self.Rr = Rr
-        self.Rs = Rs
-        self.rel_attrs = rel_attrs
-
-
-    def depth_to_pcd(self):
-        pcd_list_all = []
-        for camera_index in range(self.n_cameras):
-            depth = np.array(self.depths[camera_index])
-            depth = depth * 0.001
-            rgb = np.array(self.rgbs[camera_index]) / 255.0
-            masks = np.array(self.masks[camera_index])
-            cam_param = self.cam_params[camera_index]
-            cam_extrinsic = self.cam_extrinsics[camera_index]
-            pcd_list, pcd_rgb_list, pcd_normal_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
+        for i in range(len(self.masks)):  # frame_id
             pcds = []
-            for obj_index in range(len(pcd_list)):
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(pcd_list[obj_index])
-                pcd.colors = o3d.utility.Vector3dVector(pcd_rgb_list[obj_index])
-                # pcd.normals = o3d.utility.Vector3dVector(pcd_normal_list[obj_index])
-                pcd = self.estimate_normal(pcd, cam_extrinsic)
-                pcds.append(pcd)
-            pcd_list_all.append(pcds)
-        return pcd_list_all
+            for j in range(len(self.masks[i])):  # camera_id
+                depth = np.array(Image.open(self.depths[i][j]))
+                rgb = np.array(Image.open(self.rgbs[i][j]).convert('RGB'))
+                masks = []
+                for k in range(len(self.masks[i][j])):  # obj_id
+                    if self.masks[i][j][k] is None: continue  # doesn't matter if continue here
+                    masks.append(np.array(Image.open(self.masks[i][j][k])))
+
+                if len(masks) == 0:
+                    pcds_view = o3d.geometry.PointCloud()
+                    pcds.append(pcds_view)
+                else:
+                    masks = np.stack(masks, axis=0)
+
+                    intr = self.cam_params
+                    extr = self.cam_extrinsics[j]
+
+                    # change coordinates to world frame
+                    pcds_view = self.depth_to_pcd(depth, masks, rgb, intr, extr)  # list of pcds in one view
+                    pcds.append(pcds_view)
+            
+            text_labels = []
+            for j in range(len(self.masks[i])):  # camera_id
+                text_labels_view = []
+                for k in range(len(self.masks[i][j])):  # obj_id
+                    if self.masks[i][j][k] is None: continue
+                    with open(self.text_labels[i][j][k], "r") as f:
+                        text_labels_view.append(f.read())
+                text_labels.append(text_labels_view)
+
+            # remove outliers based on table plane (RANSAC)
+            pcds = self.remove_outliers(pcds)
+
+            # points_list = []
+            # for i in range(self.n_cameras):
+            #     for j in range(len(pcds[i])):
+            #         pcd = pcds[i][j]
+            #         if pcd is None: continue
+            #         points_list.append(np.array(pcd.points))
+            # points = np.vstack(points_list)
+            # print("points min, max: {}, {}".format(points.min(0), points.max(0)))
+
+            # find corresponding objects in different views
+            global_pcds, global_labels, global_ids = self.pcd_grouping(pcds, text_labels)
+
+            # merge objects from different views
+            objs = self.merge_views(global_pcds)
+
+            # merge invisible points to reduce ovelapping effects
+            # objs = self.remove_invisible_points(objs)
+
+            # voxel downsample
+            # for i in range(len(objs)):
+            #     objs[i] = objs[i].voxel_down_sample(voxel_size=0.01)
+
+            # self.save_view_pcd(pcds)
+            # self.save_global_pcd(objs, global_labels)
+
+            self.objs = objs
+            self.labels = global_labels
+
+            # mesh reconstruction
+            meshes = self.mesh_reconstruction()
+
+            # sampling particles
+            particle_pcds = self.sample_particles_from_mesh(meshes)
+
+            # generate attributes
+            # n_types = len(set(self.labels)) + 1  # including robot end effector
+            self.particle_num = sum([np.array(pcd.points).shape[0] for pcd in particle_pcds])
+            attrs = np.zeros((self.particle_num, args.attr_dim), dtype=np.float32) # [particle_num, attr_dim]
+            # import ipdb; ipdb.set_trace()
+
+            # generate relations
+            Rr, Rs, rel_attrs = self.generate_relation(particle_pcds)
+            print("Rr shape: {}, Rs shape: {}".format(Rr.shape, Rs.shape))
+            # import ipdb; ipdb.set_trace()
+            
+            # generate state
+            state = np.vstack([np.array(pcd.points) for pcd in particle_pcds])
+            print("state shape: {}".format(state.shape))
+
+            self.state = state
+            self.attrs = attrs
+            self.Rr = Rr
+            self.Rs = Rs
+            self.rel_attrs = rel_attrs
+
+            import ipdb; ipdb.set_trace()
+
+
+    def depth_to_pcd(self, depth, masks, rgb, cam_param, cam_extrinsic):
+        pcd_list, pcd_rgb_list, pcd_normal_list = self.parse_pcd(depth, masks, rgb, cam_param, cam_extrinsic)
+        pcds = []
+        for obj_index in range(len(pcd_list)):
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pcd_list[obj_index])
+            pcd.colors = o3d.utility.Vector3dVector(pcd_rgb_list[obj_index])
+            # pcd.normals = o3d.utility.Vector3dVector(pcd_normal_list[obj_index])
+            pcd = self.estimate_normal(pcd, cam_extrinsic)
+            pcds.append(pcd)
+        return pcds
 
     def estimate_normal(self, pcd, cam_extrinsic):
         pcd.estimate_normals(
@@ -236,7 +252,7 @@ class MultiviewParticleDataset:
         dist = np.matmul(pcd_mean, eig_vec)
         return eig_vec, dist
 
-    def pcd_grouping(self, pcd_list_all):
+    def pcd_grouping(self, pcd_list_all, text_labels):
         global_pcd_list = []  # num_objects * num_cameras * (num_points, 3)
         global_id_list = []  # num_objects * num_cameras * [i, j]
         global_label_list = []  # num_objects
@@ -278,14 +294,14 @@ class MultiviewParticleDataset:
                     global_id_list[-1].extend([(i, j)])
                     
                     # store the id of the new object
-                    global_label_list.append(self.text_labels[i][j])
+                    global_label_list.append(text_labels[i][j])
                     picked_k.append(len(global_pcd_list) - 1)
 
                 else:
                     min_dist_index = np.argmin(dist_list)  # closest object's index
 
                     # check if id match
-                    text_label = self.text_labels[i][j]
+                    text_label = text_labels[i][j]
                     min_dist_text_label = global_label_list[min_dist_index]
 
                     if text_label == min_dist_text_label:
@@ -301,7 +317,7 @@ class MultiviewParticleDataset:
                         global_id_list[-1].extend([(i, j)])
 
                         # store the id of the new object
-                        global_label_list.append(self.text_labels[i][j])
+                        global_label_list.append(text_labels[i][j])
                         picked_k.append(len(global_pcd_list) - 1)
 
             # fill to same length

@@ -3,7 +3,7 @@ import torch
 from gnn.model import Model, DynamicsPredictor, EarthMoverLoss, ChamferLoss, HausdorffLoss
 
 
-def gen_model(args, material_dict, verbose=False):
+def gen_model(args, material_dict, verbose=False, debug=False):
     args.material = 'rigid'  # TODO debug
 
     # particle encoder and relation encoder
@@ -86,6 +86,8 @@ def gen_model(args, material_dict, verbose=False):
         ### LLM START ### set rigid predictor
         ### LLM END ###
     
+    if debug:
+        return None, None
 
     if args.material == 'deformable':
         emd_loss = EarthMoverLoss()

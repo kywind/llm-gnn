@@ -9,60 +9,61 @@ from config import gen_args
 from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed
 
-from data.multiview_dataparser import MultiviewDataparser
-from data.multiview_dataset import MultiviewParticleDataset
+from data.multiview_seq_dataparser import MultiviewSeqDataparser
+from data.multiview_seq_dataset import MultiviewSeqParticleDataset
 from data.utils import opengl2cam, cam2opengl
 from llm.llm import LLM
 import open3d as o3d
 
 import cv2
 import glob
+from PIL import Image
+import pickle as pkl
 # from nltk.corpus import wordnet
 
 
-def build_graph(args):
+def build_graph_all(args):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    ## configs
-    visualize = True
-    verbose = True
-    save = True
-
+    camera_indices = [0, 1, 2, 3]
     query = False
     llm_parse_object = False
-    segment = True
     llm_parse_material = False
+    detect = True
+    segment = True
 
-    camera_indices = [0, 1, 2, 3]
-    # data_dir = "../data/2023-09-13-15-19-50-765863/"
-    # vis_dir = "vis/multiview-0-debug/"
-    # dataset_name = "d3fields"
-    # img_index = 0
 
-    # data_dir = "../data/2023-09-12-17-37-14-943844/"
-    # vis_dir = "vis/multiview-shoes-0/"
-    # dataset_name = "d3fields"
-    # img_index = 0
+    data_dir = "../data/2023-09-12-17-37-14-943844/"
+    save_dir = "../data/graph-2023-09-12-17-37-14-943844/"
+    dataset_name = "d3fields"
+    img_index_range = list(range(1000))
 
-    # data_dir = "../data/2023-09-12-17-37-14-943844/"
-    # vis_dir = "vis/multiview-shoes-1/"
-    # dataset_name = "d3fields"
-    # img_index = 1000
-
-    data_dir = "../data/mustard_bottle/"
-    vis_dir = "vis/multiview-ycb-1/"
-    dataset_name = "ycb-flex"
-    img_index = 0
-
-    if not segment:
-        assert os.path.exists(vis_dir), "vis_dir does not exist"
-        assert os.path.exists(os.path.join(vis_dir, 'mask_0_0.png')), "mask_0_0.png does not exist"
+    os.makedirs(save_dir, exist_ok=True)
+    graph_dir = os.path.join(save_dir, 'graph')
+    os.makedirs(graph_dir, exist_ok=True)
+    vis_dir = os.path.join(save_dir, 'vis')
     os.makedirs(vis_dir, exist_ok=True)
+    mid_results_dir = os.path.join(save_dir, 'mid_results')
+    os.makedirs(mid_results_dir, exist_ok=True)
+    for i in range(len(camera_indices)):
+        os.makedirs(os.path.join(mid_results_dir, f'camera_{i}'), exist_ok=True)
+
+    # save_dir 
+    # |--- graph (states, actions, relations, attrs, ...)
+    #   |--- {frame_id}.pkl
+    # |--- vis (visualize the particles and relations)
+    #   |--- {frame_id}_graph.png
+    # |--- mid_results (intermediate results)
+    #   |--- camera_{camera_index}
+    #     |--- {frame_id}_detection.pkl
+    #     |--- {frame_id}_mask_{mask_id}.png
+    #     |--- {frame_id}_text_labels_{mask_id}.txt
+    #   |--- objects.txt
 
     # initial dataparser
-    init_parser = MultiviewDataparser(args, data_dir, dataset_name, img_index)
+    init_parser = MultiviewSeqDataparser(args, data_dir, dataset_name, img_index_range)
     llm = LLM(args)
 
     if query:
@@ -98,16 +99,7 @@ def build_graph(args):
         init_parser.del_query_model()
         print('After query, obj_list:', obj_list)
     else:
-        # obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
-        # obj_list = ['mouse', 'keyboard', 'pen', 'box', 'cup', 'cup mat']
-        obj_list = ['a mustard bottle']
-        # obj_list = ['shoe']
-        # obj_list = ['camera', 'tripod', 'box', 'camera lens', 'camera body', 'computer mouse', 'computer keyboard', 
-        #     'computer monitor', 'computer mouse pad', 'computer', 'remote control', 'mouse', 'keyboard', 'mouse pad', 
-        #     'mousepad', 'pen', 'a box', 'coffee mug', 'a cookie', 'phone', 'tablet', 'a mousepad', 'box of cookies', 
-        #     'cookie', 'knife', 'tape measure', 'a green screen', 'cup', 'chair', 'table', 'roll of tape', 'a pair of scissors']
-        # obj_list = ['camera', 'tripod', 'box', 'keyboard', 'mouse', 'remote control', 'pen', 'coffee mug', 'phone', 'tablet', 
-        #     'cookie', 'knife', 'tape measure', 'green screen', 'cup', 'chair', 'table', 'roll of tape', 'scissors']
+        obj_list = ['shoe']
 
         if llm_parse_object:
             objects_prompt = " ".join([
@@ -129,58 +121,68 @@ def build_graph(args):
                 obj_list_llm[i] = obj_list_llm[i].strip(' ')
             obj_list = obj_list_llm
 
+    text_prompts = [f"{obj}" for obj in obj_list]
+    print('detection and segmentation prompt:', text_prompts)  # things like: ['apple', 'banana', 'orange']
+
     # import ipdb; ipdb.set_trace()
 
-    mask_list = []
-    text_labels_list = []
+    if detect:
+        detect_vis_dir = os.path.join(vis_dir, 'detection')
+        init_parser.prepare_detect_model()
+        for i in range(len(init_parser.rgb_img_paths)):  # frame_id
+            for j in range(len(init_parser.rgb_img_paths[i])):  # camera_index
+                img = Image.open(init_parser.rgb_img_paths[i][j]).convert('RGB')
+                # depth = np.array(Image.open(init_parser.depth_imgs_paths[i][j]))
+
+                boxes, scores, labels = init_parser.detect(img, text_prompts, box_thresholds=0.5)
+
+                H, W = img.height, img.width
+                boxes = boxes * torch.Tensor([[W, H, W, H]]).to(device=device, dtype=boxes.dtype)
+                boxes[:, :2] -= boxes[:, 2:] / 2  # xywh to xyxy
+                boxes[:, 2:] += boxes[:, :2]  # xywh to xyxy
+
+                # save detection results
+                if not boxes.size(0) == 0:
+                    with open(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_detection.pkl'), 'wb') as f:
+                        pkl.dump((boxes, scores, labels), f)
+        import ipdb; ipdb.set_trace()
 
     if segment:
-        for camera_index in camera_indices:
-            masks = []
-            text_labels = []
-            chunk_size = 5
-            for t in range(len(obj_list) // chunk_size + 1):
-                obj_list_chunk = obj_list[t * chunk_size : (t + 1) * chunk_size]
-                if len(obj_list_chunk) == 0: continue
-                segmentation_results, detection_results = init_parser.segment_gdino(
-                    obj_list=obj_list_chunk,
-                    camera_index=camera_index,
-                    box_threshold=0.5,
-                )
-                if segmentation_results is None: continue
-                masks_chunk, _, text_labels_chunk = segmentation_results
-                # _, _, labels = detection_results
+        for i in range(len(init_parser.rgb_img_paths)):  # frame_id
+            for j in range(len(init_parser.rgb_img_paths[i])):  # camera_index
 
-                masks_chunk = masks_chunk.detach().cpu().numpy()  # (n_detect, H, W) boolean
-                masks.append(masks_chunk)
-                text_labels.extend(text_labels_chunk)
-            masks = np.concatenate(masks, axis=0)
+                # load detection results
+                if os.path.exists(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_detection.pkl')):
+                    with open(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_detection.pkl'), 'rb') as f:
+                        boxes, scores, labels = pkl.load(f)
+                else:
+                    continue
 
-            for i in range(masks.shape[0]):
-                mask = (masks[i] * 255).astype(np.uint8)
-                if save:
-                    cv2.imwrite(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)), mask)
-                    with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'w') as f:
+                img = Image.open(init_parser.rgb_img_paths[i][j]).convert('RGB')
+                
+                masks = []
+                text_labels = []
+                chunk_size = 5
+                for t in range(len(obj_list) // chunk_size + 1):
+                    obj_list_chunk = obj_list[t * chunk_size : (t + 1) * chunk_size]
+                    if len(obj_list_chunk) == 0: continue
+                    segmentation_results, detection_results = init_parser.segment(
+                        img, boxes, scores, labels, text_prompts
+                    )
+                    if segmentation_results is None: continue
+                    masks_chunk, _, text_labels_chunk = segmentation_results
+                    # _, _, labels = detection_results
+
+                    masks_chunk = masks_chunk.detach().cpu().numpy()  # (n_detect, H, W) boolean
+                    masks.append(masks_chunk)
+                    text_labels.extend(text_labels_chunk)
+                masks = np.concatenate(masks, axis=0)
+
+                for k in range(masks.shape[0]):
+                    mask = (masks[k] * 255).astype(np.uint8)
+                    cv2.imwrite(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_mask_{k}.png'), mask)
+                    with open(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_text_labels_{k}.txt'), 'w') as f:
                         f.write(text_labels[i])
-            
-            mask_list.append(masks)
-            text_labels_list.append(text_labels)
-
-    else:
-        for camera_index in camera_indices:
-            masks = []
-            text_labels = []
-            mask_dirs = glob.glob(os.path.join(vis_dir, 'mask_{}*.png'.format(camera_index)))
-            for i in range(len(mask_dirs)):
-                mask = cv2.imread(os.path.join(vis_dir, 'mask_{}_{}.png'.format(camera_index, i)))
-                mask = (mask > 0)[..., 0]  # (H, W) boolean
-                masks.append(mask)
-                with open(os.path.join(vis_dir, 'text_labels_{}_{}.txt'.format(camera_index, i)), 'r') as f:
-                    text_labels.append(f.read())
-            masks = np.stack(masks, axis=0)
-
-            mask_list.append(masks)
-            text_labels_list.append(text_labels)
 
     # import ipdb; ipdb.set_trace()
 
@@ -213,34 +215,51 @@ def build_graph(args):
     # import ipdb; ipdb.set_trace()
 
     # set model
-    model, model_loss = gen_model(args, material_dict, verbose=verbose)
-    model.eval()
-    model = model.to(device)
+    _, _ = gen_model(args, material_dict, verbose=False, debug=True)
+    # model.eval()
+    # model = model.to(device)
 
     # set dataset
     cam_list = (init_parser.cam_params, init_parser.cam_extrinsics)
 
-    data = MultiviewParticleDataset(
+    depth_path_list = init_parser.depth_imgs_paths  # 2 layers
+    rgb_path_list = init_parser.rgb_img_paths  # 2 layers
+    mask_path_list = []  # 3 layers
+    text_labels_path_list = []  # 3 layers
+    for i in range(len(init_parser.rgb_img_paths)):  # frame_id
+        for j in range(len(init_parser.rgb_img_paths[i])):  # camera_index
+            if os.path.exists(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_detection.pkl')):
+                masks = glob.glob(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_mask_*.png'))
+                if len(masks) == 0: 
+                    mask_path_list.append(None)
+                    text_labels_path_list.append(None)
+                else:
+                    mask_path_list.append(masks)
+                    text_labels_path_list.append(glob.glob(os.path.join(mid_results_dir, f'camera_{j}', f'{i}_text_labels_*.txt')))
+            else:
+                mask_path_list.append(None)
+                text_labels_path_list.append(None)
+        
+
+    data = MultiviewSeqParticleDataset(
         args=args,
-        depths=init_parser.depth_imgs,
-        masks=mask_list,
-        rgbs=init_parser.rgb_imgs,
+        depths=depth_path_list,
+        masks=mask_path_list,
+        rgbs=rgb_path_list,
         cams=cam_list,
-        text_labels_list=text_labels_list,
+        text_labels_list=text_labels_path_list,
         material_dict=material_dict,
+        save_dir=graph_dir,
         vis_dir=vis_dir,
-        visualize=visualize,
-        verbose=verbose,
-        save=save,
     )
 
     # import ipdb; ipdb.set_trace()
 
     # visualize the particles on the image
-    if save: draw_particles(data, vis_dir)
+    # if save: draw_particles(data, vis_dir)
 
     # visualize the relations in open3d
-    if visualize: draw_relations(data)
+    # if visualize: draw_relations(data)
  
 
 def draw_particles(data, vis_dir):
@@ -340,5 +359,5 @@ def draw_relations(data):
 
 if __name__ == '__main__':
     args = gen_args()
-    build_graph(args)
+    build_graph_all(args)
 
