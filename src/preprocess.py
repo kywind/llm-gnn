@@ -67,6 +67,11 @@ def load_fingers(args):
         left_finger_points = left_finger_points @ extr.T  # (N, 4)
         right_finger_points = right_finger_points @ extr.T  # (N, 4)
 
+        # get other quantities: grasper_dist, grasper_pose (used in grasp planner)
+        grasper_dist = np.linalg.norm(left_finger_points - right_finger_points, axis=1).mean()
+        robotiq_pose_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'robotiq_base', f'{i}.txt'))
+        robotiq_pose_in_tag_frame = base_pose_in_tag @ robotiq_pose_in_base_frame
+
         # project finger points
         fx, fy, cx, cy = intr
         left_finger_projs = np.zeros((N, 2))
@@ -90,6 +95,15 @@ def load_fingers(args):
         
         cv2.imwrite('test.jpg', img)
         # import ipdb; ipdb.set_trace()
+    
+    def get_grasper_dist(self, sel_time):
+        left_finger_points, right_finger_points = self.get_finger_points(sel_time)
+        return 
+
+    def get_grasper_pose(self, sel_time):
+        robotiq_pose_in_base_frame = np.loadtxt(os.path.join(self.root_dir, 'pose', 'robotiq_base', f'{sel_time}.txt'))
+        robotiq_pose_in_tag_frame = self.base_in_tag_frame @ robotiq_pose_in_base_frame
+        return robotiq_pose_in_tag_frame
 
 
 def load_keypoints(args):
@@ -499,7 +513,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
             "p_rigid": p_rigid,
             "p_instance": p_instance,
             "physics_param": physics_param,
-            "adj_thresh": adj_thresh
+            "adj_thresh": np.array([adj_thresh])
         }
         save_path = os.path.join(save_dir, f'{i:06}.pkl')
         pkl.dump(graph, open(save_path, 'wb'))
