@@ -17,6 +17,7 @@ system and run config
 # parser.add_argument('--env', default='Gripper')
 # parser.add_argument('--stage', default='dy', help="dy: dynamics model; control")
 parser.add_argument('--random_seed', type=int, default=42)
+parser.add_argument('--verbose', type=int, default=0)
 
 # parser.add_argument('--valid', type=int, default=0)
 # parser.add_argument('--eval', type=int, default=0)
@@ -58,6 +59,7 @@ parser.add_argument('--nf_relation', type=int, default=150)
 parser.add_argument('--nf_particle', type=int, default=150)
 parser.add_argument('--nf_effect', type=int, default=150)
 
+parser.add_argument('--state_normalize', type=int, default=1)
 # parser.add_argument('--load_action', type=int, default=0)
 # parser.add_argument('--load_gt', type=int, default=0)
 

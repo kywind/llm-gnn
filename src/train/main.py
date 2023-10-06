@@ -18,6 +18,11 @@ import glob
 from PIL import Image
 import pickle as pkl
 
+    
+def parse_gt(data):
+    gt_pos = data['pos'][:, 1:, :, :]
+    gt_pos = gt_pos.reshape(gt_pos.shape[0], gt_pos.shape[1], -1)
+    return gt_pos
 
 def train_rigid(args):
     set_seed(args.random_seed)
@@ -25,9 +30,10 @@ def train_rigid(args):
     args.device = device
 
     data_dir = "../data/2023-09-04-18-42-27-707743"
-    phases = ['train', 'val']
+    phases = ['train']
     batch_size = 64
     n_epoch = 2000
+    log_interval = 10
     datasets = {phase: RigidDynDataset(args, data_dir, phase) for phase in phases}
 
     dataloaders = {phase: DataLoader(
@@ -37,12 +43,26 @@ def train_rigid(args):
         num_workers=8,
     ) for phase in phases}
  
-    model = gen_model(args, material_dict=None, verbose=True, debug=False)
+    model, loss_funcs = gen_model(args, material_dict=None, verbose=True, debug=False)
+    model.to(device)
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     for epoch in range(n_epoch):
         for phase in phases:
             for i, data in enumerate(dataloaders[phase]):
-                import ipdb; ipdb.set_trace()
- 
+                optimizer.zero_grad()
+                data = {key: data[key].to(device) for key in data.keys()}
+                pred_state, pred_motion = model(**data)
+
+                gt_state = data['gt_state']
+                gt_motion = data['gt_motion']
+                loss = [func(pred_state, gt_state) for func in loss_funcs]
+                loss_sum = sum(loss)
+                loss_sum.backward()
+                optimizer.step()
+                if i % log_interval == 0:
+                    print(f'Epoch {epoch}, iter {i}, loss {loss_sum.item()}')
+
 
 if __name__ == "__main__":
     args = gen_args()

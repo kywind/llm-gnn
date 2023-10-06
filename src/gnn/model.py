@@ -76,6 +76,7 @@ class DynamicsPredictor(nn.Module):
         self.nf_particle = args.nf_particle
         self.nf_relation = args.nf_relation
         self.nf_effect = args.nf_effect
+        self.state_normalize = args.state_normalize
 
         self.quat_offset = torch.FloatTensor([1., 0., 0., 0.]).to(args.device)
 
@@ -121,29 +122,29 @@ class DynamicsPredictor(nn.Module):
         
 
     # @profile
-    def forward(self, state, attrs, Rr_cur, Rs_cur, p_instance, p_rigid, 
-            action=None, memory=None, offset=None, physics_param=None, particle_den=None, verbose=False):
+    def forward(self, state, attrs, Rr, Rs, p_instance, p_rigid, 
+            action=None, physics_param=None, particle_den=None, verbose=False, **kwargs):  # memory=None, offset=None
 
         args = self.args
-        verbose = args.verbose_model
+        verbose = args.verbose
 
         B, N = attrs.size(0), attrs.size(1)  # batch size, total particle num
         n_instance = p_instance.size(2)  # number of instances
         n_p = p_instance.size(1)  # number of object particles (that need prediction)
         n_s = attrs.size(1) - n_p  # number of shape particles that do not need prediction
-        n_rel = Rr_cur.size(1)  # number of relations
+        n_rel = Rr.size(1)  # number of relations
 
         # attrs: B x N x attr_dim
         # state: B x n_his x N x state_dim
-        # Rr_cur, Rs_cur: B x n_rel x N
+        # Rr, Rs: B x n_rel x N
         # memory: B x mem_nlayer x N x nf_memory
         # p_rigid: B x n_instance
         # p_instance: B x n_particle x n_instance
         # physics_param: B x n_particle
 
-        # Rr_cur_t, Rs_cur_t: B x N x n_rel
-        Rr_cur_t = Rr_cur.transpose(1, 2).contiguous()
-        Rs_cur_t = Rs_cur.transpose(1, 2).contiguous()
+        # Rr_t, Rs_t: B x N x n_rel
+        Rr_t = Rr.transpose(1, 2).contiguous()
+        Rs_t = Rs.transpose(1, 2).contiguous()
 
         # particle belongings and rigidness
         # p_rigid_per_particle: B x n_p x 1
@@ -152,6 +153,8 @@ class DynamicsPredictor(nn.Module):
         # state_res: B x (n_his - 1) x N x state_dim, state_cur: B x 1 x N x state_dim     
         state_res = state[:, 1:] - state[:, :-1]
         state_cur = state[:, -1:]
+
+        import ipdb; ipdb.set_trace()
 
         if self.state_normalize:
             # *_p: absolute scale to model scale, *_d: residual scale to model scale
@@ -173,7 +176,7 @@ class DynamicsPredictor(nn.Module):
         p_inputs = torch.cat([attrs, state_norm_t], 2)
 
         # other inputs
-        if offset is not None:
+        if args.offset_dim > 0:
             # add offset to center-of-mass for rigids to attr
             # offset: B x N x (n_his * state_dim)
             offset = torch.zeros(B, N, self.n_his * self.state_dim).to(args.device)
@@ -197,10 +200,11 @@ class DynamicsPredictor(nn.Module):
         #     # p_inputs: B x N x (... + mem_nlayer * nf_memory)
         #     p_inputs = torch.cat([p_inputs, memory_t], 2)
         
-        if physics_param is not None:
+        if args.phys_dim > 0:
+            assert physics_param is not None
             # physics_param: B x N x 1
-            physics_param_s = torch.zeros(B, n_s, 1).to(args.device)
-            physics_param = torch.cat([physics_param[:, :, None], physics_param_s], 1)
+            # physics_param_s = torch.zeros(B, n_s, 1).to(args.device)
+            # physics_param = torch.cat([physics_param[:, :, None], physics_param_s], 1)
 
             # p_inputs: B x N x (... + phys_dim)
             p_inputs = torch.cat([p_inputs, physics_param], 2)
@@ -217,7 +221,8 @@ class DynamicsPredictor(nn.Module):
         #     p_inputs = torch.cat([p_inputs, g], 2)
         
         # action
-        if action is not None:
+        if args.action_dim > 0:
+            assert action is not None
             # action: B x N x action_dim
             action_s = torch.zeros(B, n_s, self.action_dim).to(args.device)
             action = torch.cat([action, action_s], 1)
@@ -225,8 +230,9 @@ class DynamicsPredictor(nn.Module):
             # p_inputs: B x N x (... + action_dim)
             p_inputs = torch.cat([p_inputs, action], 2)
 
-        if particle_den is not None:
-            particle_den = particle_den / 5000.
+        if args.density_dim > 0:
+            assert particle_den is not None
+            # particle_den = particle_den / 5000.
 
             # particle_den: B x N x 1
             particle_den = particle_den[:, None, None].repeat(1, n_p, 1)
@@ -243,8 +249,8 @@ class DynamicsPredictor(nn.Module):
             assert self.rel_particle_dim == 2 * p_inputs.size(2)
             # p_inputs_r: B x n_rel x -1
             # p_inputs_s: B x n_rel x -1
-            p_inputs_r = Rr_cur.bmm(p_inputs)
-            p_inputs_s = Rs_cur.bmm(p_inputs)
+            p_inputs_r = Rr.bmm(p_inputs)
+            p_inputs_s = Rs.bmm(p_inputs)
 
             # rel_inputs: B x n_rel x (2 x rel_particle_dim)
             rel_inputs = torch.cat([rel_inputs, p_inputs_r, p_inputs_s], 2)
@@ -252,8 +258,8 @@ class DynamicsPredictor(nn.Module):
         if self.rel_attr_dim > 0:
             # attr_r: B x n_rel x attr_dim
             # attr_s: B x n_rel x attr_dim
-            attrs_r = Rr_cur.bmm(attrs)
-            attrs_s = Rs_cur.bmm(attrs)
+            attrs_r = Rr.bmm(attrs)
+            attrs_s = Rs.bmm(attrs)
 
             # rel_inputs: B x n_rel x (... + 2 x rel_attr_dim)
             rel_inputs = torch.cat([rel_inputs, attrs_r, attrs_s], 2)
@@ -264,8 +270,8 @@ class DynamicsPredictor(nn.Module):
             # group_r: B x n_rel x -1
             # group_s: B x n_rel x -1
             g = torch.cat([p_instance, torch.zeros(B, n_s, n_instance).to(args.device)], 1)
-            group_r = Rr_cur.bmm(g)
-            group_s = Rs_cur.bmm(g)
+            group_r = Rr.bmm(g)
+            group_s = Rs.bmm(g)
             group_diff = torch.sum(torch.abs(group_r - group_s), 2, keepdim=True)
 
             # rel_inputs: B x n_rel x (... + 1)
@@ -276,8 +282,8 @@ class DynamicsPredictor(nn.Module):
             # receiver_pos, sender_pos
             # pos_r: B x n_rel x -1
             # pos_s: B x n_rel x -1
-            pos_r = Rr_cur.bmm(state_norm_t)
-            pos_s = Rs_cur.bmm(state_norm_t)
+            pos_r = Rr.bmm(state_norm_t)
+            pos_s = Rs.bmm(state_norm_t)
             pos_diff = pos_r - pos_s
 
             # rel_inputs: B x n_rel x (... + 3)
@@ -288,8 +294,8 @@ class DynamicsPredictor(nn.Module):
             # receiver_density, sender_density
             # dens_r: B x n_rel x -1
             # dens_s: B x n_rel x -1
-            dens_r = Rr_cur.bmm(particle_den)
-            dens_s = Rs_cur.bmm(particle_den)
+            dens_r = Rr.bmm(particle_den)
+            dens_s = Rs.bmm(particle_den)
             dens_diff = dens_r - dens_s
 
             # rel_inputs: B x n_rel x (... + 1)
@@ -311,8 +317,8 @@ class DynamicsPredictor(nn.Module):
                 print("pstep", i)
 
             # effect_r, effect_s: B x n_rel x nf
-            effect_r = Rr_cur.bmm(particle_effect)
-            effect_s = Rs_cur.bmm(particle_effect)
+            effect_r = Rr.bmm(particle_effect)
+            effect_s = Rs.bmm(particle_effect)
 
             # calculate relation effect
             # effect_rel: B x n_rel x nf
@@ -323,7 +329,7 @@ class DynamicsPredictor(nn.Module):
 
             # calculate particle effect by aggregating relation effect
             # effect_rel_agg: B x N x nf
-            effect_rel_agg = Rr_cur_t.bmm(effect_rel)
+            effect_rel_agg = Rr_t.bmm(effect_rel)
 
             # calculate particle effect
             # particle_effect: B x N x nf

@@ -15,7 +15,7 @@ from data.utils import label_colormap
 # os.system(f"python MiDaS/run.py --input {img_dir} --output {depth_dir} --model MiDaS/weights/dpt_beit_large_512.pt")
 
 
-def load_fingers(args):
+def load_fingers(args, idx=None):
     # filter raw data
     # generate save_dir/valid_frames.txt
     data_dir = "../data/2023-09-04-18-42-27-707743/"
@@ -25,11 +25,11 @@ def load_fingers(args):
     # os.makedirs(save_dir, exist_ok=True)
     # frame_save_dir = os.path.join(save_dir, "valid_frames.txt")
 
-    len_img_paths = len(list(glob.glob(os.path.join(data_dir, "camera_1/color/color_*.png"))))
-    img_paths = [os.path.join(data_dir, "camera_1/color/color_{}.png".format(i)) for i in range(len_img_paths)]
+    len_img_paths = len(list(glob.glob(os.path.join(data_dir, "camera_0/color/color_*.png"))))
+    img_paths = [os.path.join(data_dir, "camera_0/color/color_{}.png".format(i)) for i in range(len_img_paths)]
 
-    intr = np.load(os.path.join(data_dir, "camera_1/camera_params.npy"))
-    extr = np.load(os.path.join(data_dir, "camera_1/camera_extrinsics.npy"))
+    intr = np.load(os.path.join(data_dir, "camera_0/camera_params.npy"))
+    extr = np.load(os.path.join(data_dir, "camera_0/camera_extrinsics.npy"))
     print(intr.shape, extr.shape)
 
     base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
@@ -39,13 +39,25 @@ def load_fingers(args):
                                               [-0.01, -0.025, 0.051], # top left
                                               [0.01,  -0.025, 0.051]]) # top right
 
+    push_num = len(os.listdir(os.path.join(data_dir, 'push')))
+    push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
+    push_time = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_time.npy')) for i in range(push_num)]
+    push_pts = np.stack(push_pts, axis=0) # (push_num, 2, 3)
+    push_time = np.stack(push_time, axis=0) # (push_num, 2)
+
+    t_list = np.loadtxt(os.path.join(data_dir, 'push_t_list.txt'), dtype=np.int32)
+
     # for i, img_path in enumerate(img_paths):
-    i = 0
-    img_path = img_paths[i]
+    # i = 920
+    if idx is None: i = 2
+    else: i = idx
+    t = t_list[i][0]
+    print("i:", i, "t:", t)
+    img_path = img_paths[t]
     print(img_path)
     if True:
-        left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{i}.txt'))
-        right_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'right_finger', f'{i}.txt'))
+        left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{t}.txt'))
+        right_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'right_finger', f'{t}.txt'))
 
         left_finger_in_tag_frame = base_pose_in_tag @ left_finger_in_base_frame
         right_finger_in_tag_frame = base_pose_in_tag @ right_finger_in_base_frame
@@ -59,6 +71,25 @@ def load_fingers(args):
         left_finger_points = left_finger_points.T # (N, 4)
         right_finger_points = right_finger_points.T # (N, 4)
 
+        # get other quantities: grasper_dist, grasper_pose (used in grasp planner)
+        grasper_dist = np.linalg.norm(left_finger_points - right_finger_points, axis=1).mean()
+        robotiq_pose_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'robotiq_base', f'{t}.txt'))
+        robotiq_pose_in_tag_frame = base_pose_in_tag @ robotiq_pose_in_base_frame
+
+        # TODO check the potential calibration difference between finger positions and push info
+        mean_push_pt = np.concatenate([left_finger_points[:, :3], right_finger_points[:, :3]], axis=0).mean(axis=0) # [3]  # ocurrent push location
+        push_pt = push_pts[i, 0]
+        print(mean_push_pt)
+        print(push_pt)
+        left_finger_points[:, :3] += (push_pt - mean_push_pt)
+        right_finger_points[:, :3] += (push_pt - mean_push_pt)
+
+        # print(left_finger_points)
+        # print(right_finger_points)
+        # left_finger_points[:, 2] += (-0.05 - left_finger_points[:, 2].mean())
+        # right_finger_points[:, 2] += (-0.05 - right_finger_points[:, 2].mean())
+
+
         # img = Image.open(img_path).convert('RGB')
         # depth = Image.open(img_path.replace("color", "depth"))
         img = cv2.imread(img_path)
@@ -66,11 +97,6 @@ def load_fingers(args):
         # transform finger points to camera coordinate
         left_finger_points = left_finger_points @ extr.T  # (N, 4)
         right_finger_points = right_finger_points @ extr.T  # (N, 4)
-
-        # get other quantities: grasper_dist, grasper_pose (used in grasp planner)
-        grasper_dist = np.linalg.norm(left_finger_points - right_finger_points, axis=1).mean()
-        robotiq_pose_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'robotiq_base', f'{i}.txt'))
-        robotiq_pose_in_tag_frame = base_pose_in_tag @ robotiq_pose_in_base_frame
 
         # project finger points
         fx, fy, cx, cy = intr
@@ -152,6 +178,97 @@ def load_keypoints(args):
                     (int(colormap[j, 2]), int(colormap[j, 1]), int(colormap[j, 0])), -1)
             
             cv2.imwrite(f'test_kp_{i}_{cam}.jpg', img)
+
+
+def load_pushes(args, idx=None):
+    data_dir = "../data/2023-09-04-18-42-27-707743/"
+    push_num = len(os.listdir(os.path.join(data_dir, 'push')))
+    push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
+    push_time = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_time.npy')) for i in range(push_num)]
+    push_pts = np.stack(push_pts, axis=0) # (push_num, 2, 3)
+    push_time = np.stack(push_time, axis=0) # (push_num, 2)
+
+    base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
+
+    finger_points_in_finger_frame = np.array([[0.01,  -0.025, 0.014], # bottom right
+                                              [-0.01, -0.025, 0.014], # bottom left
+                                              [-0.01, -0.025, 0.051], # top left
+                                              [0.01,  -0.025, 0.051]]) # top right
+
+    eef_paths = sorted(list(glob.glob(os.path.join(data_dir, 'eef_kypts', '*.npy'))))
+    num_frames = len(eef_paths)
+
+    t_list = np.loadtxt(os.path.join(data_dir, 'push_t_list.txt'), dtype=np.int32)
+
+    # for i in range(num_frames):
+    if idx is None: i = 2
+    else: i = idx
+    if True:
+        push_pt = push_pts[i, 0]
+        t = t_list[i][0]
+        print("i:", i, "t:", t)
+        
+        # eef_path = eef_paths[i]
+        # eef_kp = np.load(eef_path) # (N, 3)
+
+        # extract finger points
+        left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{t}.txt'))
+        right_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'right_finger', f'{t}.txt'))
+
+        left_finger_in_tag_frame = base_pose_in_tag @ left_finger_in_base_frame
+        right_finger_in_tag_frame = base_pose_in_tag @ right_finger_in_base_frame
+
+        N = finger_points_in_finger_frame.shape[0]
+        finger_points_in_finger_frame_homo = np.concatenate([finger_points_in_finger_frame, np.ones((N, 1))], axis=1) # (N, 4)
+        
+        left_finger_points = left_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+        right_finger_points = right_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+
+        left_finger_points = left_finger_points.T # (N, 4)
+        right_finger_points = right_finger_points.T # (N, 4)
+        
+        mean_push_pt = np.concatenate([left_finger_points[:, :3], right_finger_points[:, :3]], axis=0).mean(axis=0) # [3]  # ocurrent push location
+
+        # consistency check
+        if np.max(mean_push_pt[:2] - push_pt[:2]) > 2e-3:
+            print(i, t, mean_push_pt, push_pt)
+        
+        # TODO check the potential calibration difference between finger positions and push info
+        print(mean_push_pt)
+        print(push_pt)
+        mean_push_pt[:3] += (push_pt - mean_push_pt)
+
+        # transform mean push to finger poses again
+        next_push_pt = push_pts[i, 1]
+        mean_push_pt_double = np.concatenate([mean_push_pt, next_push_pt], axis=0)
+        eef_pts = push_to_eef_pts(mean_push_pt_double)[0]
+
+        img_path = os.path.join(data_dir, f"camera_0/color/color_{t}.png")
+        intr = np.load(os.path.join(data_dir, "camera_0/camera_params.npy"))
+        extr = np.load(os.path.join(data_dir, "camera_0/camera_extrinsics.npy"))
+
+        img = cv2.imread(img_path)
+
+        # transform finger points to camera coordinate
+        eef_pts_homo = np.concatenate([eef_pts, np.ones((eef_pts.shape[0], 1))], axis=1)
+        eef_pts_cam = eef_pts_homo @ extr.T  # (N, 4)
+        eef_pts_cam = eef_pts_cam[:, :3]
+
+        # project finger points
+        fx, fy, cx, cy = intr
+        eef_pts_projs = np.zeros((eef_pts_cam.shape[0], 2))
+        eef_pts_projs[:, 0] = eef_pts_cam[:, 0] * fx / eef_pts_cam[:, 2] + cx
+        eef_pts_projs[:, 1] = eef_pts_cam[:, 1] * fy / eef_pts_cam[:, 2] + cy
+        
+        for j in range(eef_pts.shape[0]):
+            cv2.circle(img, (int(eef_pts_projs[j, 0]), int(eef_pts_projs[j, 1])), 3, (0, 0, 255), -1)
+        
+        cv2.imwrite('test_push.jpg', img)
+
+        # mean_x = (left_finger_projs[:, 0].mean() + right_finger_projs[:, 0].mean()) / 2
+        # mean_y = (left_finger_projs[:, 1].mean() + right_finger_projs[:, 1].mean()) / 2
+        # mean_depth = (left_finger_points[:, 2].mean() + right_finger_points[:, 2].mean()) / 2
+        # print(mean_x, mean_y, mean_depth)
 
 
 def preprocess_raw_finger_keypoints(args):  # select frames where fingers are visible (deprecated)
@@ -333,6 +450,8 @@ def extract_pushes(args):  # save obj and eef keypoints
     last_push_pt = np.zeros(3)
     curr_push_pt = np.zeros(3)
     push_idx = 0
+    t_list_dense = []
+    t_list = []
     for t in image_times:
         is_start = False
         is_end = False
@@ -344,8 +463,12 @@ def extract_pushes(args):  # save obj and eef keypoints
                 # for sparse
                 if timestamps[t - 1] < pt[0]:
                     is_start = True
+                    t_last = t
                 elif timestamps[t + 1] >= pt[1]:
                     is_end = True
+                    t_curr = t
+                    t_list.append([t_last, t_curr])
+                    t_last, t_curr = None, None
                 break
         else:
             curr_mode = 'idle'
@@ -357,6 +480,7 @@ def extract_pushes(args):  # save obj and eef keypoints
                 os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl")}')
             # initialize eef keypoints for each push
             last_push_pt = push_pts[push_idx, 0]
+            t_last_dense = t
         
         # extract finger points
         left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{t}.txt'))
@@ -381,14 +505,18 @@ def extract_pushes(args):  # save obj and eef keypoints
         # TODO: 0.02 is a hyperparameter worth tuning
         if (np.linalg.norm(curr_push_pt - last_push_pt) >= 0.02 and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
             # store obj kypts at current state to next record_idx
+            print(last_push_pt, curr_push_pt)
             os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
             # store the push between last state and current state to current record_idx
             curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
+            t_curr_dense = t
+            t_list_dense.append([t_last_dense, t_curr_dense])
 
             eef_pts = push_to_eef_pts(curr_push) # (2, eef_ptcl_num, 3)
             np.save(os.path.join(dense_eef_kypts_dir, f'{record_idx:06}.npy'), eef_pts)
             record_idx += 1
             last_push_pt = curr_push_pt.copy()
+            t_last_dense = t_curr_dense
         
         ## sparse
         if (is_start and push_idx == 0):  # only satisfy once
@@ -404,6 +532,9 @@ def extract_pushes(args):  # save obj and eef keypoints
         if curr_mode == 'idle' and last_mode == 'push':
             push_idx += 1
         last_mode = curr_mode
+
+    np.savetxt(os.path.join(data_dir, 'push_t_list.txt'), np.array(t_list).astype(np.int32), fmt='%i')
+    np.savetxt(os.path.join(data_dir, 'push_t_list_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
 
 
 def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper function for construct_graph
@@ -458,6 +589,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
     num_frames = len(obj_kp_paths) - 1  # last frame do not have corresponding eef keypoints
 
     # all in world space, don't need to load camera params
+    graph_list = []
     for i in range(num_frames):
         # get keypoints 
         obj_kp_path = obj_kp_paths[i]
@@ -503,18 +635,43 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         states_delta = np.zeros((obj_kp_num + eef_kp_num, states.shape[-1]))
         states_delta[-eef_kp_num:] = eef_kp[1] - eef_kp[0]
 
+        # next state
+        pred_gap = 1
+        obj_kp_path_next = obj_kp_paths[i+pred_gap]
+        obj_kp_next = pkl.load(open(obj_kp_path_next, 'rb')) # list of (rand_ptcl_num, 3)
+        obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
+        obj_kp_next = np.concatenate(obj_kp_next, axis=0) # (N = instance_num * rand_ptcl_num, 3)
+        eef_kp_path_next = os.path.join(eef_kp_dir, f'{i+pred_gap:06}.npy')
+        eef_kp_next = np.load(eef_kp_path_next).astype(np.float32)   # (2, 8, 3)
+        assert eef_kp_next is not None, print(eef_kp_path_next)
+        assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency
+        states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
+
         # save graph
         graph = {
             "attrs": attrs, 
-            "states": states, 
-            "states_delta": states_delta, 
+            "state": states, 
+            "action": states_delta,
             "Rr": Rr, 
             "Rs": Rs,
             "p_rigid": p_rigid,
             "p_instance": p_instance,
             "physics_param": physics_param,
-            "adj_thresh": np.array([adj_thresh])
+            "particle_den": np.array([adj_thresh]),
+            "state_next": states_next,
+            "next_motion": states_next - states
         }
+        graph_list.append(graph)
+
+    max_n_Rr = max([graph['Rr'].shape[0] for graph in graph_list])
+    max_n_Rs = max([graph['Rs'].shape[0] for graph in graph_list])
+
+    print("max number of relations Rr: ", max_n_Rr)
+    print("max number of relations Rs: ", max_n_Rs)
+
+    for i, graph in enumerate(graph_list):
+        graph["Rr"] = np.pad(graph["Rr"], ((0, max_n_Rr - graph["Rr"].shape[0]), (0, 0)), mode='constant')
+        graph["Rs"] = np.pad(graph["Rs"], ((0, max_n_Rs - graph["Rs"].shape[0]), (0, 0)), mode='constant')
         save_path = os.path.join(save_dir, f'{i:06}.pkl')
         pkl.dump(graph, open(save_path, 'wb'))
 
@@ -602,8 +759,9 @@ def preprocess_graph_old(args):  # save states, relations and attributes; use va
 
 if __name__ == "__main__":
     args = gen_args()
-    # load_fingers(args)
+    load_fingers(args, 12)
     # load_keypoints(args)
+    load_pushes(args, 12)
     # preprocess_raw_finger_keypoints(args)
     # extract_pushes(args)
-    preprocess_graph(args)
+    # preprocess_graph(args)
