@@ -452,6 +452,7 @@ def extract_pushes(args):  # save obj and eef keypoints
     push_idx = 0
     t_list_dense = []
     t_list = []
+    offset = None
     for t in image_times:
         is_start = False
         is_end = False
@@ -480,6 +481,7 @@ def extract_pushes(args):  # save obj and eef keypoints
                 os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl")}')
             # initialize eef keypoints for each push
             last_push_pt = push_pts[push_idx, 0]
+            offset = None
             t_last_dense = t
         
         # extract finger points
@@ -500,12 +502,21 @@ def extract_pushes(args):  # save obj and eef keypoints
         
         curr_push_pt = np.concatenate([left_finger_points[:, :3], right_finger_points[:, :3]], axis=0).mean(axis=0) # [3]  # ocurrent push location
         
+        # calculate calibration offset between finger points and pushes
+        if curr_mode == 'push' and last_mode == 'idle':
+            assert np.linalg.norm(curr_push_pt - last_push_pt) < 0.02
+            offset = last_push_pt - curr_push_pt
+        
+        # fix current push with the offset
+        if (curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
+            assert offset is not None
+            curr_push_pt += offset
+
         ## dense
         # save points in push
         # TODO: 0.02 is a hyperparameter worth tuning
         if (np.linalg.norm(curr_push_pt - last_push_pt) >= 0.02 and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
             # store obj kypts at current state to next record_idx
-            print(last_push_pt, curr_push_pt)
             os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
             # store the push between last state and current state to current record_idx
             curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
@@ -518,7 +529,7 @@ def extract_pushes(args):  # save obj and eef keypoints
             last_push_pt = curr_push_pt.copy()
             t_last_dense = t_curr_dense
         
-        ## sparse
+        ## sparse (does not use curr_push)
         if (is_start and push_idx == 0):  # only satisfy once
             os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(obj_kypts_dir, f"{push_idx:06}.pkl")}')
         elif is_end:  # once per push
@@ -641,11 +652,12 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         obj_kp_next = pkl.load(open(obj_kp_path_next, 'rb')) # list of (rand_ptcl_num, 3)
         obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
         obj_kp_next = np.concatenate(obj_kp_next, axis=0) # (N = instance_num * rand_ptcl_num, 3)
-        eef_kp_path_next = os.path.join(eef_kp_dir, f'{i+pred_gap:06}.npy')
-        eef_kp_next = np.load(eef_kp_path_next).astype(np.float32)   # (2, 8, 3)
-        assert eef_kp_next is not None, print(eef_kp_path_next)
-        assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency
-        states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
+        # eef_kp_path_next = os.path.join(eef_kp_dir, f'{i+pred_gap:06}.npy')
+        # eef_kp_next = np.load(eef_kp_path_next).astype(np.float32)   # (2, 8, 3)
+        # assert eef_kp_next is not None, print(eef_kp_path_next)
+        # assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency (need to handle jumps)
+        # states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
+        states_next = obj_kp_next
 
         # save graph
         graph = {
@@ -658,8 +670,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
             "p_instance": p_instance,
             "physics_param": physics_param,
             "particle_den": np.array([adj_thresh]),
-            "state_next": states_next,
-            "next_motion": states_next - states
+            "state_next": states_next,  # only obj keypoints
         }
         graph_list.append(graph)
 
@@ -759,9 +770,9 @@ def preprocess_graph_old(args):  # save states, relations and attributes; use va
 
 if __name__ == "__main__":
     args = gen_args()
-    load_fingers(args, 12)
+    # load_fingers(args, 12)
     # load_keypoints(args)
-    load_pushes(args, 12)
+    # load_pushes(args, 12)
     # preprocess_raw_finger_keypoints(args)
     # extract_pushes(args)
-    # preprocess_graph(args)
+    preprocess_graph(args)
