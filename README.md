@@ -17,7 +17,7 @@ cd ../..
 
 ## install PyFleX
 # this follows the instructions in https://github.com/WangYixuan12/dyn-res-pile-manip/
-# ensure docker is installed
+# ensure docker-ce is installed (https://docs.docker.com/engine/install/ubuntu/)
 # ensure nvidia-docker is installed. This is by:
 # sudo apt-get install -y nvidia-container-toolkit
 # sudo systemctl restart docker (docker service name can be found by sudo systemctl list-units --type=service | grep -i docker)
