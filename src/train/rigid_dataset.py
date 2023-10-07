@@ -36,12 +36,6 @@ class RigidDynDataset(Dataset):
     
     def __getitem__(self, idx):
         graph_path = self.graph_paths[idx]
-        graph_path_next = self.graph_paths[idx + 1]
         with open(graph_path, 'rb') as f:
             graph = pickle.load(f)
-        with open(graph_path_next, 'rb') as f:
-            graph_next = pickle.load(f)
-        # get movements
-        graph['gt_state'] = graph_next['state']
-        graph['gt_motion'] = graph_next['state'] - graph['state']
         return graph

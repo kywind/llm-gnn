@@ -31,8 +31,8 @@ def gen_model(args, material_dict, verbose=False, debug=False):
         
     elif args.material == 'rigid':
         # particle encoder
-        args.attr_dim = 1  # single attribute
-        args.n_his = 4  # consider history
+        args.attr_dim = 3  # up to two objects and one end effector
+        args.n_his = 1  # TODO consider history
         args.state_dim = 3  # x, y, z
         args.offset_dim = 3  # same as state_dim
         args.action_dim = 0  # do not consider action (timestep actions)
@@ -40,7 +40,7 @@ def gen_model(args, material_dict, verbose=False, debug=False):
         args.time_step = 1
         args.dt = 1. / 60.
         args.sequence_length = 4
-        args.phys_dim = 2  # friction, density
+        args.phys_dim = 0  # TODO friction, density
         args.density_dim = 0  # particle density
 
         # relation encoder

@@ -1,11 +1,13 @@
 import glob
 import numpy as np
 import os
+import sys
 import torch
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import gen_args
 from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed
@@ -54,9 +56,9 @@ def train_rigid(args):
                 data = {key: data[key].to(device) for key in data.keys()}
                 pred_state, pred_motion = model(**data)
 
-                gt_state = data['gt_state']
-                gt_motion = data['gt_motion']
-                loss = [func(pred_state, gt_state) for func in loss_funcs]
+                gt_state = data['state_next']
+                pred_state_p = pred_state[:, :gt_state.shape[1], :3]
+                loss = [func(pred_state_p, gt_state) for func in loss_funcs]
                 loss_sum = sum(loss)
                 loss_sum.backward()
                 optimizer.step()

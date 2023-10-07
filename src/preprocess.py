@@ -8,6 +8,7 @@ import pickle as pkl
 
 from config import gen_args
 from data.utils import label_colormap
+from gnn.model_wrapper import gen_model
 
 # img_dir = 'vis/apples_640.png'
 # depth_dir = 'vis/apples_640_depth.npy'
@@ -479,6 +480,7 @@ def extract_pushes(args):  # save obj and eef keypoints
             # initialize obj keypoints for each push
             if record_idx == 0:
                 os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl")}')
+                print('loading obj keypoints for push 0')
             # initialize eef keypoints for each push
             last_push_pt = push_pts[push_idx, 0]
             offset = None
@@ -518,6 +520,7 @@ def extract_pushes(args):  # save obj and eef keypoints
         if (np.linalg.norm(curr_push_pt - last_push_pt) >= 0.02 and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
             # store obj kypts at current state to next record_idx
             os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
+            print('loading obj keypoints for push', record_idx + 1)
             # store the push between last state and current state to current record_idx
             curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
             t_curr_dense = t
@@ -625,7 +628,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         physics_param = np.zeros(obj_kp_num + eef_kp_num, dtype=np.float32)  # 1-dim
 
         attr_dim = 3
-        attrs = np.zeros((obj_kp_num + eef_kp_num, attr_dim))
+        attrs = np.zeros((obj_kp_num + eef_kp_num, attr_dim), dtype=np.float32)
         for j in range(instance_num + 1):  # instances and end-effector
             assert instance_num + 1 <= attr_dim  # TODO make attr_dim instance_num independent
             one_hot = np.zeros(attr_dim)
@@ -647,8 +650,8 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         states_delta[-eef_kp_num:] = eef_kp[1] - eef_kp[0]
 
         # next state
-        pred_gap = 1
-        obj_kp_path_next = obj_kp_paths[i+pred_gap]
+        pred_gap = 1  # TODO make this code compatible with pred_gap > 1
+        obj_kp_path_next = obj_kp_paths[i + pred_gap]
         obj_kp_next = pkl.load(open(obj_kp_path_next, 'rb')) # list of (rand_ptcl_num, 3)
         obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
         obj_kp_next = np.concatenate(obj_kp_next, axis=0) # (N = instance_num * rand_ptcl_num, 3)
@@ -657,7 +660,10 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         # assert eef_kp_next is not None, print(eef_kp_path_next)
         # assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency (need to handle jumps)
         # states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
-        states_next = obj_kp_next
+        states_next = np.concatenate([obj_kp_next, np.zeros_like(eef_kp[0])], axis=0)
+
+        # history state
+        states = states[None]  # n_his = 1  # TODO make this code compatible with n_his > 1
 
         # save graph
         graph = {
@@ -670,7 +676,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
             "p_instance": p_instance,
             "physics_param": physics_param,
             "particle_den": np.array([adj_thresh]),
-            "state_next": states_next,  # only obj keypoints
+            "state_next": states_next,  # only obj keypoints contain useful info
         }
         graph_list.append(graph)
 
@@ -770,6 +776,7 @@ def preprocess_graph_old(args):  # save states, relations and attributes; use va
 
 if __name__ == "__main__":
     args = gen_args()
+    _ = gen_model(args, material_dict=None, debug=True)
     # load_fingers(args, 12)
     # load_keypoints(args)
     # load_pushes(args, 12)

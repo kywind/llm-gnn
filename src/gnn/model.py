@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from scipy import optimize
 from torch.autograd import Variable
 
+from gnn.utils import rotation_matrix_from_quaternion
+
 
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
@@ -85,6 +87,7 @@ class DynamicsPredictor(nn.Module):
         self.std_p = torch.FloatTensor(args.std_p).to(args.device)
         self.mean_d = torch.FloatTensor(args.mean_d).to(args.device)
         self.std_d = torch.FloatTensor(args.std_d).to(args.device)
+        self.eps = 1e-6
 
         # ParticleEncoder
         # args.mem_dim = args.nf_effect * args.mem_nlayer
@@ -154,8 +157,6 @@ class DynamicsPredictor(nn.Module):
         state_res = state[:, 1:] - state[:, :-1]
         state_cur = state[:, -1:]
 
-        import ipdb; ipdb.set_trace()
-
         if self.state_normalize:
             # *_p: absolute scale to model scale, *_d: residual scale to model scale
             mean_p, std_p, mean_d, std_d = self.mean_p, self.std_p, self.mean_d, self.std_d
@@ -170,7 +171,7 @@ class DynamicsPredictor(nn.Module):
         # [0, n_his - 1): state_residual
         # [n_his - 1, n_his): the current position
         state_norm = torch.cat([state_res_norm, state_cur_norm], 1)
-        state_norm_t = state_norm.transpose(1, 2).contiguous().view(B, N, self.n_his * self.state_dim)
+        state_norm_t = state_norm.transpose(1, 2).contiguous().view(B, N, args.n_his * args.state_dim)
 
         # p_inputs: B x N x (attr_dim + n_his * state_dim)
         p_inputs = torch.cat([attrs, state_norm_t], 2)
@@ -179,11 +180,11 @@ class DynamicsPredictor(nn.Module):
         if args.offset_dim > 0:
             # add offset to center-of-mass for rigids to attr
             # offset: B x N x (n_his * state_dim)
-            offset = torch.zeros(B, N, self.n_his * self.state_dim).to(args.device)
+            offset = torch.zeros(B, N, args.n_his * args.state_dim).to(args.device)
 
             # instance_center: B x n_instance x (n_his * state_dim)
             instance_center = p_instance.transpose(1, 2).bmm(state_norm_t[:, :n_p])
-            instance_center /= torch.sum(p_instance, 1).unsqueeze(-1) + args.eps
+            instance_center /= torch.sum(p_instance, 1).unsqueeze(-1) + self.eps
 
             # c_per_particle: B x n_p x (n_his * state_dim)
             # particle offset: B x n_p x (n_his * state_dim)
@@ -224,8 +225,13 @@ class DynamicsPredictor(nn.Module):
         if args.action_dim > 0:
             assert action is not None
             # action: B x N x action_dim
-            action_s = torch.zeros(B, n_s, self.action_dim).to(args.device)
-            action = torch.cat([action, action_s], 1)
+            action_on_particles = False
+            if action_on_particles:
+                action_s = torch.zeros(B, n_s, self.action_dim).to(args.device)
+                action = torch.cat([action, action_s], 1)
+            else:  # action on shape particles
+                action_p = torch.zeros(B, n_p, self.action_dim).to(args.device)
+                action = torch.cat([action_p, action], 1)    
 
             # p_inputs: B x N x (... + action_dim)
             p_inputs = torch.cat([p_inputs, action], 2)
@@ -245,8 +251,8 @@ class DynamicsPredictor(nn.Module):
 
         # Preparing rel_inputs
         rel_inputs = torch.empty((B, n_rel, 0), dtype=torch.float32).to(args.device)
-        if self.rel_particle_dim > 0:
-            assert self.rel_particle_dim == 2 * p_inputs.size(2)
+        if args.rel_particle_dim > 0:
+            assert args.rel_particle_dim == p_inputs.size(2)
             # p_inputs_r: B x n_rel x -1
             # p_inputs_s: B x n_rel x -1
             p_inputs_r = Rr.bmm(p_inputs)
@@ -255,7 +261,8 @@ class DynamicsPredictor(nn.Module):
             # rel_inputs: B x n_rel x (2 x rel_particle_dim)
             rel_inputs = torch.cat([rel_inputs, p_inputs_r, p_inputs_s], 2)
 
-        if self.rel_attr_dim > 0:
+        if args.rel_attr_dim > 0:
+            assert args.rel_attr_dim == attrs.size(2)
             # attr_r: B x n_rel x attr_dim
             # attr_s: B x n_rel x attr_dim
             attrs_r = Rr.bmm(attrs)
@@ -264,8 +271,8 @@ class DynamicsPredictor(nn.Module):
             # rel_inputs: B x n_rel x (... + 2 x rel_attr_dim)
             rel_inputs = torch.cat([rel_inputs, attrs_r, attrs_s], 2)
 
-        if self.rel_group_dim > 0:
-            assert self.rel_group_dim == 1
+        if args.rel_group_dim > 0:
+            assert args.rel_group_dim == 1
             # receiver_group, sender_group
             # group_r: B x n_rel x -1
             # group_s: B x n_rel x -1
@@ -277,8 +284,8 @@ class DynamicsPredictor(nn.Module):
             # rel_inputs: B x n_rel x (... + 1)
             rel_inputs = torch.cat([rel_inputs, group_diff], 2)
         
-        if self.rel_distance_dim > 0:
-            assert self.rel_distance_dim == 3
+        if args.rel_distance_dim > 0:
+            assert args.rel_distance_dim == 3
             # receiver_pos, sender_pos
             # pos_r: B x n_rel x -1
             # pos_s: B x n_rel x -1
@@ -289,8 +296,8 @@ class DynamicsPredictor(nn.Module):
             # rel_inputs: B x n_rel x (... + 3)
             rel_inputs = torch.cat([rel_inputs, pos_diff], 2)
         
-        if self.rel_density_dim > 0:
-            assert self.rel_density_dim == 1
+        if args.rel_density_dim > 0:
+            assert args.rel_density_dim == 1
             # receiver_density, sender_density
             # dens_r: B x n_rel x -1
             # dens_s: B x n_rel x -1
@@ -355,7 +362,7 @@ class DynamicsPredictor(nn.Module):
 
             # decode rotation
             # R: (B * n_instance) x 3 x 3
-            R = self.rotation_matrix_from_quaternion(instance_rigid_params[:, :4] + self.quat_offset)
+            R = rotation_matrix_from_quaternion(instance_rigid_params[:, :4] + self.quat_offset)
             if verbose:
                 print("Rotation matrix", R.size(), "should be (B x n_instance, 3, 3)")
 
@@ -363,14 +370,14 @@ class DynamicsPredictor(nn.Module):
             b = instance_rigid_params[:, 4:]
             if self.state_normalize:  # denormalize
                 b = b * std_d + mean_d
-            b = b.view(B * n_instance, 1, self.state_dim)
+            b = b.view(B * n_instance, 1, args.state_dim)
             if verbose:
                 print("b", b.size(), "should be (B x n_instance, 1, state_dim)")
 
             # current particle state
             # p_0: B x 1 x n_p x state_dim -> (B * n_instance) x n_p x state_dim
             p_0 = state[:, -1:, :n_p]
-            p_0 = p_0.repeat(1, n_instance, 1, 1).view(B * n_instance, n_p, self.state_dim)
+            p_0 = p_0.repeat(1, n_instance, 1, 1).view(B * n_instance, n_p, args.state_dim)
             if verbose:
                 print("p_0", p_0.size(), "should be (B x n_instance, n_p, state_dim)")
 
@@ -378,7 +385,7 @@ class DynamicsPredictor(nn.Module):
             c = instance_center[:, :, -3:]
             if self.state_normalize:  # denormalize
                 c = c * std_p + mean_p
-            c = c.view(B * n_instance, 1, self.state_dim)
+            c = c.view(B * n_instance, 1, args.state_dim)
             if verbose:
                 print("c", c.size(), "should be (B x n_instance, 1, state_dim)")
 
@@ -389,14 +396,14 @@ class DynamicsPredictor(nn.Module):
 
             # compute difference for per-particle rigid motion
             # rigid_motion: B x n_instance x n_p x state_dim
-            rigid_motion = (p_1 - p_0).view(B, n_instance, n_p, self.state_dim)
+            rigid_motion = (p_1 - p_0).view(B, n_instance, n_p, args.state_dim)
             if self.state_normalize:  # normalize
                 rigid_motion = (rigid_motion - mean_d) / std_d
         
         # aggregate motions
         rigid_part = p_rigid_per_particle[..., 0].bool()
 
-        pred_motion = torch.zeros(B, n_p, self.state_dim).to(args.device)
+        pred_motion = torch.zeros(B, n_p, args.state_dim).to(args.device)
         if self.non_rigid_predictor is not None:
             pred_motion[~rigid_part] = non_rigid_motion[~rigid_part]
         if self.rigid_predictor is not None:
