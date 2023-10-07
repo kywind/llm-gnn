@@ -32,6 +32,8 @@ def train_rigid(args):
     args.device = device
 
     data_dir = "../data/2023-09-04-18-42-27-707743"
+    out_dir = "../log/shoe_debug"
+    os.makedirs(out_dir, exist_ok=True)
     phases = ['train']
     batch_size = 64
     n_epoch = 2000
@@ -65,6 +67,7 @@ def train_rigid(args):
                 if i % log_interval == 0:
                     print(f'Epoch {epoch}, iter {i}, loss {loss_sum.item()}')
 
+        torch.save(model.state_dict(), os.path.join(out_dir, f'model_{epoch}.pth'))
 
 if __name__ == "__main__":
     args = gen_args()
