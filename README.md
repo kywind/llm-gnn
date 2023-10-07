@@ -15,7 +15,7 @@ cd GroundingDINO
 pip install -e .
 cd ../..
 
-## install PyFleX
+## install PyFleX (optional)
 # this follows the instructions in https://github.com/WangYixuan12/dyn-res-pile-manip/
 # ensure docker-ce is installed (https://docs.docker.com/engine/install/ubuntu/)
 # ensure nvidia-docker is installed. This is by:
@@ -60,7 +60,7 @@ wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 wget https://huggingface.co/spaces/xinyu1205/recognize-anything/resolve/main/ram_swin_large_14m.pth
 cd ../..
 
-## download data
+## download data (optional)
 mkdir data
 cd data
 gdown 1RriJbYKIVR60HZDpMWB0F8sL9iWpZl7n
