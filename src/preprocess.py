@@ -16,10 +16,10 @@ from gnn.model_wrapper import gen_model
 # os.system(f"python MiDaS/run.py --input {img_dir} --output {depth_dir} --model MiDaS/weights/dpt_beit_large_512.pt")
 
 
-def load_fingers(args, idx=None):
+def load_fingers(args, data_dir, idx=None):
     # filter raw data
     # generate save_dir/valid_frames.txt
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
     # save_dir = "../data/graph-2023-08-23-12-08-12-201998/"
     # dataset_name = "d3fields"
 
@@ -133,15 +133,15 @@ def load_fingers(args, idx=None):
         return robotiq_pose_in_tag_frame
 
 
-def load_keypoints(args):
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def load_keypoints(args, data_dir):
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
     # save_dir = "../data/graph-2023-08-23-12-08-12-201998/"
     # dataset_name = "d3fields"
     # os.makedirs(save_dir, exist_ok=True)
     # frame_save_dir = os.path.join(save_dir, "valid_frames.txt")
 
     
-    pkl_paths = sorted(list(glob.glob(os.path.join(data_dir, 'obj_kypts', '*.pkl'))))
+    pkl_paths = sorted(list(glob.glob(os.path.join(data_dir, 'obj_kypts_orig', '*.pkl'))))
 
     frame_list = [324, 966]
     for i in frame_list:
@@ -151,7 +151,7 @@ def load_keypoints(args):
         for cam in range(4):
             intr = np.load(os.path.join(data_dir, f"camera_{cam}/camera_params.npy"))
             extr = np.load(os.path.join(data_dir, f"camera_{cam}/camera_extrinsics.npy"))
-            img_path = pkl_path.replace('obj_kypts', f'camera_{cam}/color').replace(f'{i:06d}.pkl', f'color_{i}.png')
+            img_path = pkl_path.replace('obj_kypts_orig', f'camera_{cam}/color').replace(f'{i:06d}.pkl', f'color_{i}.png')
             obj_kp = pkl.load(open(pkl_path, 'rb')) # list of (rand_ptcl_num, 3)
 
             top_k = 20
@@ -181,8 +181,8 @@ def load_keypoints(args):
             cv2.imwrite(f'test_kp_{i}_{cam}.jpg', img)
 
 
-def load_pushes(args, idx=None):
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def load_pushes(args, data_dir, idx=None):
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
     push_num = len(os.listdir(os.path.join(data_dir, 'push')))
     push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
     push_time = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_time.npy')) for i in range(push_num)]
@@ -272,8 +272,8 @@ def load_pushes(args, idx=None):
         # print(mean_x, mean_y, mean_depth)
 
 
-def preprocess_raw_finger_keypoints(args):  # select frames where fingers are visible (deprecated)
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def preprocess_raw_finger_keypoints(args, data_dir):  # select frames where fingers are visible (deprecated)
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
 
     len_img_paths = len(list(glob.glob(os.path.join(data_dir, "camera_0/color/color_*.png"))))
     img_paths = [os.path.join(data_dir, "camera_0/color/color_{}.png".format(i)) for i in range(len_img_paths)]
@@ -411,8 +411,8 @@ def push_to_eef_pts(pushes):  # helper function for extract_pushes
     return eef_pts
 
 
-def extract_pushes(args):  # save obj and eef keypoints
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def extract_pushes(args, data_dir):  # save obj and eef keypoints
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
     
     # create output dir
     eef_kypts_dir = os.path.join(data_dir, 'eef_kypts') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
@@ -461,7 +461,10 @@ def extract_pushes(args):  # save obj and eef keypoints
         for p_idx, pt in enumerate(push_time):
             if timestamps[t] >= pt[0] and timestamps[t] < pt[1]:
                 curr_mode = 'push'
-                assert push_idx == p_idx
+                try:
+                    assert push_idx == p_idx
+                except:
+                    print(f"no frames recorded in directory {data_dir}, push {push_idx - 1}")
                 # for sparse
                 if timestamps[t - 1] < pt[0]:
                     is_start = True
@@ -480,7 +483,7 @@ def extract_pushes(args):  # save obj and eef keypoints
             # initialize obj keypoints for each push
             if record_idx == 0:
                 os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl")}')
-                print('loading obj keypoints for push 0')
+                # print('loading obj keypoints for push 0')
             # initialize eef keypoints for each push
             last_push_pt = push_pts[push_idx, 0]
             offset = None
@@ -520,7 +523,7 @@ def extract_pushes(args):  # save obj and eef keypoints
         if (np.linalg.norm(curr_push_pt - last_push_pt) >= 0.02 and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
             # store obj kypts at current state to next record_idx
             os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
-            print('loading obj keypoints for push', record_idx + 1)
+            # print('loading obj keypoints for push', record_idx + 1)
             # store the push between last state and current state to current record_idx
             curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
             t_curr_dense = t
@@ -551,10 +554,11 @@ def extract_pushes(args):  # save obj and eef keypoints
     np.savetxt(os.path.join(data_dir, 'push_t_list_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
 
 
-def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper function for construct_graph
+def construct_edges_from_states(states, adj_thresh, mask, eef_mask):  # helper function for construct_graph
     # :param states: (B, N, state_dim) torch tensor
     # :param adj_thresh: float
-    # :param exclude_last_N: int exclude connection between last N particles (end effectors)
+    # :param mask: (B, N) torch tensor, true when index is a valid particle
+    # :param eef_mask: (B, N) torch tensor, true when index is a valid eef particle
     # :return:
     # - Rr: (B, n_rel, N) torch tensor
     # - Rs: (B, n_rel, N) torch tensor
@@ -566,7 +570,14 @@ def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper f
     # adj_matrix: B x particle_num x particle_num
     threshold = adj_thresh * adj_thresh
     dis = torch.sum((s_sender - s_receiv)**2, -1)
-    dis[:, -exclude_last_N:, -exclude_last_N:] = 1e10
+    mask_1 = mask[:, :, None].repeat(1, 1, N)
+    mask_2 = mask[:, None, :].repeat(1, N, 1)
+    mask = mask_1 * mask_2
+    dis[~mask] = 1e10  # avoid invalid particles to particles relations
+    eef_mask_1 = eef_mask[:, :, None].repeat(1, 1, N)
+    eef_mask_2 = eef_mask[:, None, :].repeat(1, N, 1)
+    eef_mask = eef_mask_1 * eef_mask_2
+    dis[eef_mask] = 1e10  # avoid eef to eef relations
     adj_matrix = ((dis - threshold) < 0).float()
     
     # add topk constraints
@@ -589,8 +600,8 @@ def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper f
     return Rr, Rs
 
 
-def preprocess_graph(args):  # save states, relations and attributes; use results of extract_pushes
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max_nR=None):  # save states, relations and attributes; use results of extract_pushes
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
 
     save_dir = os.path.join(data_dir, "graph")
     os.makedirs(save_dir, exist_ok=True)
@@ -611,6 +622,7 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         eef_kp_path = os.path.join(eef_kp_dir, f'{i:06}.npy')
         eef_kp = np.load(eef_kp_path).astype(np.float32)   # (2, 8, 3)
         eef_kp_num = eef_kp.shape[1]
+        ptcl_per_eef = eef_kp.shape[1]
 
         top_k = 20
         obj_kp = [kp[:top_k] for kp in obj_kp]  # identical subsampling for all instances
@@ -619,35 +631,76 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         obj_kp = np.concatenate(obj_kp, axis=0) # (N = instance_num * rand_ptcl_num, 3)
         obj_kp_num = obj_kp.shape[0]
 
-        # construct attributes
-        p_rigid = np.ones(instance_num + 1, dtype=np.float32)  # TODO extend to nonrigid
-        p_instance = np.zeros((obj_kp_num + eef_kp_num, instance_num + 1), dtype=np.float32)
+        if max_nobj is not None:
+            # pad obj_kp
+            obj_kp_pad = np.zeros((max_nobj, 3), dtype=np.float32)
+            obj_kp_pad[:obj_kp_num] = obj_kp
+            obj_kp = obj_kp_pad
+            obj_kp_num = max_nobj
+        else:
+            print("not using max_nobj which only works for fixed number of obj keypoints")
+        
+        if max_neef is not None:
+            # pad eef_kp
+            eef_kp_pad = np.zeros((2, max_neef, 3), dtype=np.float32)
+            eef_kp_pad[:, :eef_kp_num] = eef_kp
+            eef_kp = eef_kp_pad
+            eef_kp_num = max_neef
+        else:
+            print("not using max_neef which only works for fixed number of eef keypoints")
+        
+        if max_n is not None:
+            max_instance_num = max_n
+            assert max_instance_num >= instance_num
+        else:
+            print("not using max_n which only works for fixed number of objects")
+            max_instance_num = instance_num
+
+        state_mask = np.zeros((obj_kp_num + eef_kp_num), dtype=bool)
+        state_mask[obj_kp_num : obj_kp_num + ptcl_per_eef] = True
+        state_mask[:instance_num * ptcl_per_instance] = True
+
+        eef_mask = np.zeros((obj_kp_num + eef_kp_num), dtype=bool)
+        eef_mask[obj_kp_num : obj_kp_num + ptcl_per_eef] = True
+
+        # construct instance information
+        p_rigid = np.ones(max_instance_num + 1, dtype=np.float32)  # TODO extend to nonrigid
+        p_instance = np.zeros((obj_kp_num + eef_kp_num, max_instance_num + 1), dtype=np.float32)
         for j in range(instance_num):
-            p_instance[j * ptcl_per_instance : (j + 1) * ptcl_per_instance, j] = 1
-        p_instance[-eef_kp_num:, -1] = 1
+            p_instance[j * ptcl_per_instance : (j + 1) * ptcl_per_instance, j] = 1  # TODO different number of particles per instance
+        p_instance[obj_kp_num : obj_kp_num + ptcl_per_eef, -1] = 1
         physics_param = np.zeros(obj_kp_num + eef_kp_num, dtype=np.float32)  # 1-dim
 
-        attr_dim = 3
+        # construct attributes
+        # attr_dim = max_instance_num + 1
+        # assert attr_dim == args.attr_dim
+        # attrs = np.zeros((obj_kp_num + eef_kp_num, attr_dim), dtype=np.float32)
+        # for j in range(instance_num + 1):  # instances and end-effector
+        #     # assert instance_num + 1 <= attr_dim  # TODO make attr_dim instance_num independent
+        #     one_hot = np.zeros(attr_dim)
+        #     if j == instance_num:  # end-effector
+        #         one_hot[-1] = 1.
+        #         attrs[obj_kp_num : obj_kp_num + ptcl_per_eef] = one_hot
+        #     else:
+        #         one_hot[j] = 1.
+        #         attrs[j * ptcl_per_instance: (j + 1) * ptcl_per_instance] = one_hot
+        attr_dim = 2
+        assert attr_dim == args.attr_dim
         attrs = np.zeros((obj_kp_num + eef_kp_num, attr_dim), dtype=np.float32)
-        for j in range(instance_num + 1):  # instances and end-effector
-            assert instance_num + 1 <= attr_dim  # TODO make attr_dim instance_num independent
-            one_hot = np.zeros(attr_dim)
-            if j == instance_num:  # end-effector
-                one_hot[-1] = 1.
-                attrs[obj_kp_num:] = one_hot
-            else:
-                one_hot[j] = 1.
-                attrs[j * ptcl_per_instance: (j + 1) * ptcl_per_instance] = one_hot
+        attrs[:instance_num * ptcl_per_instance] = 1.
+        attrs[obj_kp_num : obj_kp_num + ptcl_per_eef, 1] = 1.
 
         # construct relations (density as hyperparameter)
         adj_thresh = 0.1
         states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
-        Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, exclude_last_N=eef_kp_num)
+        Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
+                                             mask=torch.tensor(state_mask).unsqueeze(0), 
+                                             eef_mask=torch.tensor(eef_mask).unsqueeze(0))
         Rr, Rs = Rr.squeeze(0).numpy(), Rs.squeeze(0).numpy()
 
         # action encoded as state_delta (only stored in eef keypoints)
         states_delta = np.zeros((obj_kp_num + eef_kp_num, states.shape[-1]))
-        states_delta[-eef_kp_num:] = eef_kp[1] - eef_kp[0]
+        states_delta[obj_kp_num : obj_kp_num + ptcl_per_eef] = eef_kp[1] - eef_kp[0]
 
         # next state
         pred_gap = 1  # TODO make this code compatible with pred_gap > 1
@@ -660,7 +713,13 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         # assert eef_kp_next is not None, print(eef_kp_path_next)
         # assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency (need to handle jumps)
         # states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
-        states_next = np.concatenate([obj_kp_next, np.zeros_like(eef_kp[0])], axis=0)
+        # states_next = np.concatenate([obj_kp_next, np.zeros_like(eef_kp[0])], axis=0)
+        states_next = obj_kp_next
+        if max_nobj is not None:
+            # pad states_next
+            states_pad = np.zeros((max_nobj, 3), dtype=np.float32)
+            states_pad[:states_next.shape[0]] = states_next
+            states_next = states_pad
 
         # history state
         states = states[None]  # n_his = 1  # TODO make this code compatible with n_his > 1
@@ -676,12 +735,18 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
             "p_instance": p_instance,
             "physics_param": physics_param,
             "particle_den": np.array([adj_thresh]),
-            "state_next": states_next,  # only obj keypoints contain useful info
+            "state_next": states_next,
         }
+        # print([f"{key}: {val.shape}" for key, val in graph.items()])
         graph_list.append(graph)
 
-    max_n_Rr = max([graph['Rr'].shape[0] for graph in graph_list])
-    max_n_Rs = max([graph['Rs'].shape[0] for graph in graph_list])
+    if max_nR is not None:
+        max_n_Rr = max_nR
+        max_n_Rs = max_nR
+    else:
+        # print([graph['Rr'].shape[0] for graph in graph_list])
+        max_n_Rr = max([graph['Rr'].shape[0] for graph in graph_list])
+        max_n_Rs = max([graph['Rs'].shape[0] for graph in graph_list])
 
     print("max number of relations Rr: ", max_n_Rr)
     print("max number of relations Rs: ", max_n_Rs)
@@ -693,8 +758,8 @@ def preprocess_graph(args):  # save states, relations and attributes; use result
         pkl.dump(graph, open(save_path, 'wb'))
 
 
-def preprocess_graph_old(args):  # save states, relations and attributes; use valid_list, deprecated
-    data_dir = "../data/2023-09-04-18-42-27-707743/"
+def preprocess_graph_old(args, data_dir):  # save states, relations and attributes; use valid_list, deprecated
+    # data_dir = "../data/2023-09-04-18-42-27-707743/"
 
     save_dir = os.path.join(data_dir, "graph")
     os.makedirs(save_dir, exist_ok=True)
@@ -705,7 +770,7 @@ def preprocess_graph_old(args):  # save states, relations and attributes; use va
     valid_list = np.loadtxt(os.path.join(data_dir, 'valid_frames.txt'), dtype=np.int32)
     print(len(valid_list), len(img_paths))
 
-    pkl_paths = sorted(list(glob.glob(os.path.join(data_dir, 'obj_kypts', '*.pkl'))))
+    pkl_paths = sorted(list(glob.glob(os.path.join(data_dir, 'obj_kypts_orig', '*.pkl'))))
 
     base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
 
@@ -777,9 +842,39 @@ def preprocess_graph_old(args):  # save states, relations and attributes; use va
 if __name__ == "__main__":
     args = gen_args()
     _ = gen_model(args, material_dict=None, debug=True)
-    # load_fingers(args, 12)
-    # load_keypoints(args)
-    # load_pushes(args, 12)
-    # preprocess_raw_finger_keypoints(args)
-    # extract_pushes(args)
-    preprocess_graph(args)
+
+    # load_keypoints(args, "../data/2023-09-04-18-26-45-932029")
+    # preprocess_graph(args, "../data/2023-09-04-18-26-45-932029")
+    # raise Exception
+
+    # base_data_dir = "../data"
+    # data_dir_list = glob.glob(os.path.join(base_data_dir, "*"))
+    data_dir_list = [
+        "../data/2023-08-30-03-04-49-509758",
+        "../data/2023-08-23-12-08-12-201998",
+        "../data/2023-08-30-02-02-53-617979",
+        "../data/2023-08-30-01-45-16-257548",
+        "../data/2023-08-23-12-23-07-775716",
+        "../data/2023-08-30-02-20-39-572700",
+        "../data/2023-08-30-03-44-14-098121",
+        "../data/2023-08-30-00-54-02-790828",
+        "../data/2023-08-30-02-48-27-532912",
+        "../data/2023-08-29-17-49-04-904390",
+        "../data/2023-08-30-03-27-55-702301",
+        "../data/2023-08-29-18-07-15-165315",
+        "../data/2023-08-23-12-17-53-370195",
+        "../data/2023-09-04-18-42-27-707743",
+        "../data/2023-08-30-04-16-04-497588",
+        # "../data/2023-08-29-21-23-47-258600",
+        "../data/2023-08-30-04-00-39-286249",
+        "../data/2023-08-29-20-10-13-123194",
+        "../data/2023-09-04-18-26-45-932029",
+        "../data/2023-08-30-00-47-16-839238",
+    ]
+    for data_dir in data_dir_list:
+        if os.path.isdir(data_dir):
+            print(data_dir)
+            # load_fingers(args, data_dir, idx=12)
+            # load_pushes(args, data_dir, idx=12)
+            extract_pushes(args, data_dir)
+            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240)

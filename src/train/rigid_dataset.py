@@ -20,16 +20,21 @@ from data.utils import depth2fgpcd, np2o3d
 class RigidDynDataset(Dataset):
     def __init__(self, 
         args,
-        data_dir,
+        data_dirs,
         phase='train',
     ):
         self.args = args
-        self.data_dir = data_dir
         self.phase = phase
-        
-        graph_dir = os.path.join(data_dir, 'graph')
-        self.graph_paths = sorted(glob.glob(os.path.join(graph_dir, '*.pkl')))
-        print(f'Found {len(self.graph_paths)} graphs in {graph_dir}')
+        self.data_dirs = data_dirs[phase]
+        print(f'Setting up {phase} dataset')
+        print(f'Found {len(self.data_dirs)} data directories')
+
+        self.graph_paths = []
+        for data_dir in self.data_dirs:
+            graph_dir = os.path.join(data_dir, 'graph')
+            graph_path_list = sorted(glob.glob(os.path.join(graph_dir, '*.pkl')))
+            self.graph_paths.extend(graph_path_list)
+            print(f'Found {len(graph_path_list)} graphs in {graph_dir}')
 
     def __len__(self):
         return len(self.graph_paths)

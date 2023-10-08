@@ -3,7 +3,7 @@ import torch
 from gnn.model import Model, DynamicsPredictor, EarthMoverLoss, ChamferLoss, HausdorffLoss
 
 
-def gen_model(args, material_dict, verbose=False, debug=False):
+def gen_model(args, material_dict, checkpoint=None, verbose=False, debug=False):
     args.material = 'rigid'  # TODO debug
 
     # particle encoder and relation encoder
@@ -31,7 +31,7 @@ def gen_model(args, material_dict, verbose=False, debug=False):
         
     elif args.material == 'rigid':
         # particle encoder
-        args.attr_dim = 3  # up to two objects and one end effector
+        args.attr_dim = 2  # object and end effector
         args.n_his = 1  # TODO consider history
         args.state_dim = 3  # x, y, z
         args.offset_dim = 3  # same as state_dim
@@ -105,4 +105,6 @@ def gen_model(args, material_dict, verbose=False, debug=False):
         ### LLM END ###
 
     model = DynamicsPredictor(args, verbose=verbose, **kwargs)
+    if checkpoint is not None:
+        model.load_state_dict(torch.load(checkpoint))
     return model, model_loss
