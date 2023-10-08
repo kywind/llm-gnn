@@ -16,7 +16,7 @@ from gnn.model_wrapper import gen_model
 # os.system(f"python MiDaS/run.py --input {img_dir} --output {depth_dir} --model MiDaS/weights/dpt_beit_large_512.pt")
 
 
-def load_fingers(args, data_dir, idx=None):
+def load_particles(args, data_dir):
     # filter raw data
     # generate save_dir/valid_frames.txt
     # data_dir = "../data/2023-09-04-18-42-27-707743/"
@@ -26,19 +26,47 @@ def load_fingers(args, data_dir, idx=None):
     # os.makedirs(save_dir, exist_ok=True)
     # frame_save_dir = os.path.join(save_dir, "valid_frames.txt")
 
-    len_img_paths = len(list(glob.glob(os.path.join(data_dir, "camera_0/color/color_*.png"))))
-    img_paths = [os.path.join(data_dir, "camera_0/color/color_{}.png".format(i)) for i in range(len_img_paths)]
+    camera_indices = [1, 2, 3, 4]
+    cam_idx = 1
+    episode_idx = 0
+    frame_idx = 0
 
-    intr = np.load(os.path.join(data_dir, "camera_0/camera_params.npy"))
-    extr = np.load(os.path.join(data_dir, "camera_0/camera_extrinsics.npy"))
+    num_frames = len(list(glob.glob(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/*_color.png"))))
+    # img_paths = [os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{i}_color.png") for i in range(len_img_paths)]
+    # print(img_paths)
+
+    intr = np.load(os.path.join(data_dir, "camera_1/camera_intrinsic_params.npy"))
+    extr = np.load(os.path.join(data_dir, "camera_1/camera_extrinsic_matrix.npy"))
     print(intr.shape, extr.shape)
 
-    base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
+    actions = np.load(os.path.join(data_dir, "actions.npy"))
 
-    finger_points_in_finger_frame = np.array([[0.01,  -0.025, 0.014], # bottom right
-                                              [-0.01, -0.025, 0.014], # bottom left
-                                              [-0.01, -0.025, 0.051], # top left
-                                              [0.01,  -0.025, 0.051]]) # top right
+    img = cv2.imread(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{frame_idx}_color.png"))
+    depth = cv2.imread(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{frame_idx}_depth.png"), -1)
+    obs = np.load(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{frame_idx}_obs.npy"))
+
+    particle_list = []
+    for fi in range(num_frames):
+        particle = np.load(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{fi}_particles.npy"))
+        particle_list.append(particle)
+    
+    particle_list = np.stack(particle_list, axis=0) # (num_frames, num_particles, 3)
+    print(particle_list.shape)
+
+    # visualize the trajectory of particles in particle_list
+    rand_index = np.random.choice(particle_list.shape[1], 100)
+    for i in rand_index:
+        p = particle_list[:, i, :]
+        import ipdb; ipdb.set_trace()
+        assert np.all(p[:, 2] > 0)
+
+    import ipdb; ipdb.set_trace()
+
+    # base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
+    # finger_points_in_finger_frame = np.array([[0.01,  -0.025, 0.014], # bottom right
+    #                                           [-0.01, -0.025, 0.014], # bottom left
+    #                                           [-0.01, -0.025, 0.051], # top left
+    #                                           [0.01,  -0.025, 0.051]]) # top right
 
     push_num = len(os.listdir(os.path.join(data_dir, 'push')))
     push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
@@ -131,54 +159,6 @@ def load_fingers(args, data_dir, idx=None):
         robotiq_pose_in_base_frame = np.loadtxt(os.path.join(self.root_dir, 'pose', 'robotiq_base', f'{sel_time}.txt'))
         robotiq_pose_in_tag_frame = self.base_in_tag_frame @ robotiq_pose_in_base_frame
         return robotiq_pose_in_tag_frame
-
-
-def load_keypoints(args, data_dir):
-    # data_dir = "../data/2023-09-04-18-42-27-707743/"
-    # save_dir = "../data/graph-2023-08-23-12-08-12-201998/"
-    # dataset_name = "d3fields"
-    # os.makedirs(save_dir, exist_ok=True)
-    # frame_save_dir = os.path.join(save_dir, "valid_frames.txt")
-
-    
-    pkl_paths = sorted(list(glob.glob(os.path.join(data_dir, 'obj_kypts_orig', '*.pkl'))))
-
-    frame_list = [324, 966]
-    for i in frame_list:
-        pkl_path = pkl_paths[i]
-        print(pkl_path)
-        # print(img_path)
-        for cam in range(4):
-            intr = np.load(os.path.join(data_dir, f"camera_{cam}/camera_params.npy"))
-            extr = np.load(os.path.join(data_dir, f"camera_{cam}/camera_extrinsics.npy"))
-            img_path = pkl_path.replace('obj_kypts_orig', f'camera_{cam}/color').replace(f'{i:06d}.pkl', f'color_{i}.png')
-            obj_kp = pkl.load(open(pkl_path, 'rb')) # list of (rand_ptcl_num, 3)
-
-            top_k = 20
-            obj_kp = [kp[:top_k] for kp in obj_kp]
-            instance_num = len(obj_kp)
-            ptcl_num = obj_kp[0].shape[0]
-            obj_kp = np.concatenate(obj_kp, axis=0) # (N = instance_num * rand_ptcl_num, 3)
-
-            img = cv2.imread(img_path)
-
-            # transform keypoints
-            obj_kp = np.concatenate([obj_kp, np.ones((obj_kp.shape[0], 1))], axis=1) # (N, 4)
-            obj_kp = obj_kp @ extr.T  # (N, 4)
-
-            # project keypoints
-            fx, fy, cx, cy = intr
-            obj_kp_proj = np.zeros((instance_num * ptcl_num, 2))
-            obj_kp_proj[:, 0] = obj_kp[:, 0] * fx / obj_kp[:, 2] + cx
-            obj_kp_proj[:, 1] = obj_kp[:, 1] * fy / obj_kp[:, 2] + cy
-
-            colormap = label_colormap()
-            
-            for j in range(obj_kp_proj.shape[0]):
-                cv2.circle(img, (int(obj_kp_proj[j, 0]), int(obj_kp_proj[j, 1])), 3, 
-                    (int(colormap[j, 2]), int(colormap[j, 1]), int(colormap[j, 0])), -1)
-            
-            cv2.imwrite(f'test_kp_{i}_{cam}.jpg', img)
 
 
 def load_pushes(args, data_dir, idx=None):
@@ -600,20 +580,14 @@ def construct_edges_from_states(states, adj_thresh, mask, eef_mask):  # helper f
     return Rr, Rs
 
 
-def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max_nR=None, dense=True):  # save states, relations and attributes; use results of extract_pushes
+def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max_nR=None):  # save states, relations and attributes; use results of extract_pushes
     # data_dir = "../data/2023-09-04-18-42-27-707743/"
-    if dense:
-        print("using dense push")
-        save_dir = os.path.join(data_dir, "dense_graph")
-        obj_kp_dir = os.path.join(data_dir, "dense_obj_kypts")
-        eef_kp_dir = os.path.join(data_dir, "dense_eef_kypts")
-    else:
-        print("using sparse push")
-        save_dir = os.path.join(data_dir, "graph")
-        obj_kp_dir = os.path.join(data_dir, "obj_kypts")
-        eef_kp_dir = os.path.join(data_dir, "eef_kypts")
 
+    save_dir = os.path.join(data_dir, "graph")
     os.makedirs(save_dir, exist_ok=True)
+
+    obj_kp_dir = os.path.join(data_dir, "dense_obj_kypts")
+    eef_kp_dir = os.path.join(data_dir, "dense_eef_kypts")
 
     obj_kp_paths = sorted(list(glob.glob(os.path.join(obj_kp_dir, '*.pkl'))))
 
@@ -669,15 +643,13 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
         eef_mask = np.zeros((obj_kp_num + eef_kp_num), dtype=bool)
         eef_mask[obj_kp_num : obj_kp_num + ptcl_per_eef] = True
 
-        obj_mask = np.zeros((obj_kp_num,), dtype=bool)
-        obj_mask[:instance_num * ptcl_per_instance] = True
-
         # construct instance information
-        p_rigid = np.ones(max_instance_num, dtype=np.float32)  # TODO extend to nonrigid
-        p_instance = np.zeros((obj_kp_num, max_instance_num), dtype=np.float32)
+        p_rigid = np.ones(max_instance_num + 1, dtype=np.float32)  # TODO extend to nonrigid
+        p_instance = np.zeros((obj_kp_num + eef_kp_num, max_instance_num + 1), dtype=np.float32)
         for j in range(instance_num):
             p_instance[j * ptcl_per_instance : (j + 1) * ptcl_per_instance, j] = 1  # TODO different number of particles per instance
-        physics_param = np.zeros(obj_kp_num, dtype=np.float32)  # 1-dim
+        p_instance[obj_kp_num : obj_kp_num + ptcl_per_eef, -1] = 1
+        physics_param = np.zeros(obj_kp_num + eef_kp_num, dtype=np.float32)  # 1-dim
 
         # construct attributes
         # attr_dim = max_instance_num + 1
@@ -695,7 +667,7 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
         attr_dim = 2
         assert attr_dim == args.attr_dim
         attrs = np.zeros((obj_kp_num + eef_kp_num, attr_dim), dtype=np.float32)
-        attrs[:instance_num * ptcl_per_instance, 0] = 1.
+        attrs[:instance_num * ptcl_per_instance] = 1.
         attrs[obj_kp_num : obj_kp_num + ptcl_per_eef, 1] = 1.
 
         # construct relations (density as hyperparameter)
@@ -744,7 +716,6 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
             "physics_param": physics_param,
             "particle_den": np.array([adj_thresh]),
             "state_next": states_next,
-            "obj_mask": obj_mask,
         }
         # print([f"{key}: {val.shape}" for key, val in graph.items()])
         graph_list.append(graph)
@@ -859,32 +830,12 @@ if __name__ == "__main__":
     # base_data_dir = "../data"
     # data_dir_list = glob.glob(os.path.join(base_data_dir, "*"))
     data_dir_list = [
-        "../data/2023-08-30-03-04-49-509758",
-        "../data/2023-08-23-12-08-12-201998",
-        "../data/2023-08-30-02-02-53-617979",
-        "../data/2023-08-30-01-45-16-257548",
-        "../data/2023-08-23-12-23-07-775716",
-        "../data/2023-08-30-02-20-39-572700",
-        "../data/2023-08-30-03-44-14-098121",
-        "../data/2023-08-30-00-54-02-790828",
-        "../data/2023-08-30-02-48-27-532912",
-        "../data/2023-08-29-17-49-04-904390",
-        "../data/2023-08-30-03-27-55-702301",
-        "../data/2023-08-29-18-07-15-165315",
-        "../data/2023-08-23-12-17-53-370195",
-        "../data/2023-09-04-18-42-27-707743",
-        "../data/2023-08-30-04-16-04-497588",
-        # "../data/2023-08-29-21-23-47-258600",
-        "../data/2023-08-30-04-00-39-286249",
-        "../data/2023-08-29-20-10-13-123194",
-        "../data/2023-09-04-18-26-45-932029",
-        "../data/2023-08-30-00-47-16-839238",
+        "../data/shirt",
     ]
     for data_dir in data_dir_list:
         if os.path.isdir(data_dir):
-            print(data_dir)
-            # load_fingers(args, data_dir, idx=12)
-            # load_pushes(args, data_dir, idx=12)
-            extract_pushes(args, data_dir)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240, dense=True)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240, dense=False)
+            # print(data_dir)
+            load_particles(args, data_dir)
+            # load_pushes(args, data_dir)
+            # extract_pushes(args, data_dir)
+            # preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240)

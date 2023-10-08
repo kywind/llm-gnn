@@ -78,7 +78,7 @@ class DynamicsPredictor(nn.Module):
         self.nf_particle = args.nf_particle
         self.nf_relation = args.nf_relation
         self.nf_effect = args.nf_effect
-        self.state_normalize = args.state_normalize
+        self.state_normalize = False # args.state_normalize
 
         self.quat_offset = torch.FloatTensor([1., 0., 0., 0.]).to(args.device)
 
@@ -88,6 +88,7 @@ class DynamicsPredictor(nn.Module):
         self.mean_d = torch.FloatTensor(args.mean_d).to(args.device)
         self.std_d = torch.FloatTensor(args.std_d).to(args.device)
         self.eps = 1e-6
+        self.motion_clamp = 100  # TODO hyperparameter
 
         # ParticleEncoder
         # args.mem_dim = args.nf_effect * args.mem_nlayer
@@ -126,7 +127,7 @@ class DynamicsPredictor(nn.Module):
 
     # @profile
     def forward(self, state, attrs, Rr, Rs, p_instance, p_rigid, 
-            action=None, physics_param=None, particle_den=None, verbose=False, **kwargs):  # memory=None, offset=None
+            action=None, physics_param=None, particle_den=None, obj_mask=None, verbose=False, **kwargs):  # memory=None, offset=None
 
         args = self.args
         verbose = args.verbose
@@ -144,6 +145,7 @@ class DynamicsPredictor(nn.Module):
         # p_rigid: B x n_instance
         # p_instance: B x n_particle x n_instance
         # physics_param: B x n_particle
+        # obj_mask: B x n_particle
 
         # Rr_t, Rs_t: B x N x n_rel
         Rr_t = Rr.transpose(1, 2).contiguous()
@@ -402,15 +404,19 @@ class DynamicsPredictor(nn.Module):
         
         # aggregate motions
         rigid_part = p_rigid_per_particle[..., 0].bool()
+        non_rigid_part = ~rigid_part
+        
+        rigid_part = obj_mask & rigid_part
+        non_rigid_part = obj_mask & non_rigid_part
 
         pred_motion = torch.zeros(B, n_p, args.state_dim).to(args.device)
         if self.non_rigid_predictor is not None:
-            pred_motion[~rigid_part] = non_rigid_motion[~rigid_part]
+            pred_motion[non_rigid_part] = non_rigid_motion[non_rigid_part]
         if self.rigid_predictor is not None:
             pred_motion[rigid_part] = torch.sum(p_instance.transpose(1, 2)[..., None] * rigid_motion, 1)[rigid_part]
         if self.state_normalize:  # denormalize
             pred_motion = pred_motion * std_d + mean_d
-        pred_pos = state[:, -1, :n_p] + torch.clamp(pred_motion, max=0.025, min=-0.025)
+        pred_pos = state[:, -1, :n_p] + torch.clamp(pred_motion, max=self.motion_clamp, min=-self.motion_clamp)
         if verbose:
             print('pred_pos', pred_pos.size())
 

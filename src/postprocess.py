@@ -52,8 +52,8 @@ def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper f
 
 def postprocess_graph(args, data_dir, orig_data_dir=None):
 
-    graph_dir = os.path.join(data_dir, "pred_graphs")
-    save_dir = os.path.join(data_dir, "vis")
+    graph_dir = os.path.join(data_dir, f"pred_graphs_{orig_data_dir.split('/')[-1]}")
+    save_dir = os.path.join(data_dir, f"vis_{orig_data_dir.split('/')[-1]}")
     os.makedirs(save_dir, exist_ok=True)
 
     graphs = sorted(list(glob.glob(os.path.join(graph_dir, '*.pkl'))))
@@ -84,13 +84,14 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
         p_instance = graph['p_instance']
         Rr = graph['Rr']
         Rs = graph['Rs']
+        attrs = graph['attrs']
 
         orig_state = np.concatenate([orig_state_p, orig_state_s], axis=0)  # (N+M, 3)
 
         # filter invalid particles
-        valid_idx = p_instance.sum(1).nonzero()[0]
-        valid_idx_p = p_instance[:, :-1].sum(1).nonzero()[0]
-        valid_idx_s = p_instance[:, -1].nonzero()[0]
+        valid_idx = attrs.sum(1).nonzero()[0]
+        valid_idx_p = attrs[:, :-1].sum(1).nonzero()[0]
+        valid_idx_s = attrs[:, -1].nonzero()[0]
         orig_state_p_valid = orig_state_p[valid_idx_p]
         pred_state_p_valid = pred_state_p[valid_idx_p]
         gt_state_p_valid = gt_state_p[valid_idx_p]
@@ -134,7 +135,7 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
         lst.lines = o3d.utility.Vector2iVector(lines)
         lst.colors = o3d.utility.Vector3dVector(line_colors)
 
-        # o3d.visualization.draw_geometries([pcd, pcd_pred, pcd_gt, lst])
+        o3d.visualization.draw_geometries([pcd, pcd_pred, pcd_gt, lst])
 
         # draw on images
         img_vis = False
@@ -160,7 +161,8 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
                     cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (0, 255, 0), -1)
                 cv2.imwrite(f"{graph_id}_{cam_id}.png", img)
 
-        raise
+        continue
+        # raise
 
         # construct relations (density as hyperparameter)
         adj_thresh = 0.1
@@ -207,6 +209,7 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
 if __name__ == "__main__":
     args = gen_args()
     _ = gen_model(args, material_dict=None, debug=True)
-    data_dir = "../log/shoe_debug_2/"
-    orig_data_dir = "../data/2023-08-23-12-08-12-201998"
+    data_dir = "../log/shoe_debug_4/"
+    orig_data_dir = "../data/2023-08-23-12-08-12-201998"  # not in training set
+    # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
     postprocess_graph(args, data_dir, orig_data_dir)

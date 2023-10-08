@@ -22,19 +22,24 @@ class RigidDynDataset(Dataset):
         args,
         data_dirs,
         phase='train',
+        dense=True,
     ):
         self.args = args
         self.phase = phase
-        self.data_dirs = data_dirs[phase]
+        if isinstance(data_dirs, dict):
+            self.data_dirs = data_dirs[phase]
+        elif isinstance(data_dirs, str):  # single data directory
+            self.data_dirs = [data_dirs]
         print(f'Setting up {phase} dataset')
         print(f'Found {len(self.data_dirs)} data directories')
 
         self.graph_paths = []
         for data_dir in self.data_dirs:
-            graph_dir = os.path.join(data_dir, 'graph')
+            graph_dir = os.path.join(data_dir, 'dense_graph' if dense else 'graph')
             graph_path_list = sorted(glob.glob(os.path.join(graph_dir, '*.pkl')))
             self.graph_paths.extend(graph_path_list)
             print(f'Found {len(graph_path_list)} graphs in {graph_dir}')
+        print(f'Found {len(self.graph_paths)} graphs in total')
 
     def __len__(self):
         return len(self.graph_paths)
