@@ -3,8 +3,9 @@ import torch
 from gnn.model import Model, DynamicsPredictor, EarthMoverLoss, ChamferLoss, HausdorffLoss
 
 
-def gen_model(args, material_dict, checkpoint=None, verbose=False, debug=False):
-    args.material = 'rigid'  # TODO debug
+def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=False, debug=False):
+    # args.material = 'rigid'  # TODO debug
+    args.material = material
 
     # particle encoder and relation encoder
 
@@ -35,7 +36,7 @@ def gen_model(args, material_dict, checkpoint=None, verbose=False, debug=False):
         args.n_his = 1  # TODO consider history
         args.state_dim = 3  # x, y, z
         args.offset_dim = 3  # same as state_dim
-        args.action_dim = 0  # do not consider action (timestep actions)
+        args.action_dim = 3
         args.pstep = 3
         args.time_step = 1
         args.dt = 1. / 60.
@@ -50,7 +51,28 @@ def gen_model(args, material_dict, checkpoint=None, verbose=False, debug=False):
         args.rel_distance_dim = 0  # no distance
         args.rel_density_dim = 0  # no density
     
-    elif args.material in ['deformable', 'rope', 'cloth']:
+    elif args.material == 'cloth':
+        # particle encoder
+        args.attr_dim = 2  # object and end effector
+        args.n_his = 1  # TODO consider history
+        args.state_dim = 3  # x, y, z
+        args.offset_dim = 0
+        args.action_dim = 3
+        args.pstep = 4
+        args.time_step = 1
+        args.dt = 1. / 60.
+        args.sequence_length = 4
+        args.phys_dim = 0  # TODO friction, density
+        args.density_dim = 0  # particle density
+
+        # relation encoder
+        args.rel_particle_dim = -1  # input dim
+        args.rel_attr_dim = 0  # no attribute
+        args.rel_group_dim = 0  # sum of difference of group one-hot vector
+        args.rel_distance_dim = 0  # no distance
+        args.rel_density_dim = 0  # no density
+    
+    elif args.material in ['deformable', 'rope']:
         raise NotImplementedError
 
     else:

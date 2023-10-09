@@ -51,7 +51,6 @@ def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper f
 
 
 def postprocess_graph(args, data_dir, orig_data_dir=None):
-
     graph_dir = os.path.join(data_dir, f"pred_graphs_{orig_data_dir.split('/')[-1]}")
     save_dir = os.path.join(data_dir, f"vis_{orig_data_dir.split('/')[-1]}")
     os.makedirs(save_dir, exist_ok=True)
@@ -60,11 +59,13 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
 
     num_graphs = len(graphs)
 
-    t_list = os.path.join(orig_data_dir, "push_t_list_dense.txt")
-    save_interval = 10
-    t_list = np.loadtxt(t_list)
-    t_list = t_list[::save_interval]
-    graph_frame_dict = {int(i): [int(t[0]), int(t[1])] for i, t in enumerate(t_list)}
+    img_vis = False
+    if img_vis:
+        t_list = os.path.join(orig_data_dir, "push_t_list_dense.txt")
+        save_interval = 10
+        t_list = np.loadtxt(t_list)
+        t_list = t_list[::save_interval]
+        graph_frame_dict = {int(i): [int(t[0]), int(t[1])] for i, t in enumerate(t_list)}
 
     camera_indices = [0, 1, 2, 3]
 
@@ -209,7 +210,9 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
 if __name__ == "__main__":
     args = gen_args()
     _ = gen_model(args, material_dict=None, debug=True)
-    data_dir = "../log/shoe_debug_4/"
-    orig_data_dir = "../data/2023-08-23-12-08-12-201998"  # not in training set
-    # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
+    # data_dir = "../log/shoe_debug_6/"
+    # orig_data_dir = "../data/2023-08-23-12-08-12-201998"  # not in training set
+    # # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
+    data_dir = "../log/shirt_debug_1"
+    orig_data_dir = "../data/shirt"
     postprocess_graph(args, data_dir, orig_data_dir)

@@ -10,11 +10,6 @@ from config import gen_args
 from data.utils import label_colormap
 from gnn.model_wrapper import gen_model
 
-# img_dir = 'vis/apples_640.png'
-# depth_dir = 'vis/apples_640_depth.npy'
-
-# os.system(f"python MiDaS/run.py --input {img_dir} --output {depth_dir} --model MiDaS/weights/dpt_beit_large_512.pt")
-
 
 def load_fingers(args, data_dir, idx=None):
     # filter raw data
@@ -554,7 +549,7 @@ def extract_pushes(args, data_dir):  # save obj and eef keypoints
     np.savetxt(os.path.join(data_dir, 'push_t_list_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
 
 
-def construct_edges_from_states(states, adj_thresh, mask, eef_mask):  # helper function for construct_graph
+def construct_edges_from_states(states, adj_thresh, mask, eef_mask, no_self_edge=False):  # helper function for construct_graph
     # :param states: (B, N, state_dim) torch tensor
     # :param adj_thresh: float
     # :param mask: (B, N) torch tensor, true when index is a valid particle
@@ -579,7 +574,12 @@ def construct_edges_from_states(states, adj_thresh, mask, eef_mask):  # helper f
     eef_mask = eef_mask_1 * eef_mask_2
     dis[eef_mask] = 1e10  # avoid eef to eef relations
     adj_matrix = ((dis - threshold) < 0).float()
-    
+
+    # remove self edge
+    if no_self_edge:
+        self_edge_mask = torch.eye(N, device=states.device, dtype=states.dtype)[None, :, :]
+        adj_matrix = adj_matrix * (1 - self_edge_mask)
+
     # add topk constraints
     topk = 5
     topk_idx = torch.topk(dis, k=topk, dim=-1, largest=False)[1]
@@ -703,11 +703,12 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
         states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
         Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
                                              mask=torch.tensor(state_mask).unsqueeze(0), 
-                                             eef_mask=torch.tensor(eef_mask).unsqueeze(0))
+                                             eef_mask=torch.tensor(eef_mask).unsqueeze(0),
+                                             no_self_edge=True)
         Rr, Rs = Rr.squeeze(0).numpy(), Rs.squeeze(0).numpy()
 
         # action encoded as state_delta (only stored in eef keypoints)
-        states_delta = np.zeros((obj_kp_num + eef_kp_num, states.shape[-1]))
+        states_delta = np.zeros((obj_kp_num + eef_kp_num, states.shape[-1]), dtype=np.float32)
         states_delta[obj_kp_num : obj_kp_num + ptcl_per_eef] = eef_kp[1] - eef_kp[0]
 
         # next state
@@ -886,5 +887,5 @@ if __name__ == "__main__":
             # load_fingers(args, data_dir, idx=12)
             # load_pushes(args, data_dir, idx=12)
             extract_pushes(args, data_dir)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240, dense=True)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=240, dense=False)
+            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=True)
+            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=False)

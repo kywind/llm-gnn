@@ -30,8 +30,8 @@ def build_graph(args):
     verbose = True
     save = True
 
-    query = False
-    llm_parse_object = False
+    query = True
+    llm_parse_object = True
     segment = True
     llm_parse_material = False
 
@@ -51,9 +51,14 @@ def build_graph(args):
     # dataset_name = "d3fields"
     # img_index = 1000
 
-    data_dir = "../data/mustard_bottle/"
-    vis_dir = "vis/multiview-ycb-1/"
-    dataset_name = "ycb-flex"
+    # data_dir = "../data/mustard_bottle/"
+    # vis_dir = "vis/multiview-ycb-1/"
+    # dataset_name = "ycb-flex"
+    # img_index = 0
+
+    data_dir = "../data/shirt/"
+    vis_dir = "vis/shirt/"
+    dataset_name = "flex"
     img_index = 0
 
     if not segment:
@@ -86,7 +91,7 @@ def build_graph(args):
                         obj = obj.strip(' ')
                         # synonyms = wordnet.synsets('change')
                         # synonyms_names = [word.lemma_names() for word in synonyms]
-                        import ipdb; ipdb.set_trace()
+                        # import ipdb; ipdb.set_trace()
                         if obj not in obj_dict:
                             if obj != '':
                                 obj_dict[obj] = 1

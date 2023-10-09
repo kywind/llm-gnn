@@ -32,7 +32,7 @@ def parse_gt(data):
     gt_pos = gt_pos.reshape(gt_pos.shape[0], gt_pos.shape[1], -1)
     return gt_pos
 
-def train_rigid(args, out_dir, data_dirs):
+def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid'):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -70,7 +70,7 @@ def train_rigid(args, out_dir, data_dirs):
     batch_size = 64
     n_epoch = 2000
     log_interval = 5
-    dense = False  # shoe_debug_3: False
+    # dense = False  # shoe_debug_3 and shoe_debug_4: False
     datasets = {phase: RigidDynDataset(args, data_dirs, phase, dense) for phase in phases}
 
     dataloaders = {phase: DataLoader(
@@ -80,7 +80,7 @@ def train_rigid(args, out_dir, data_dirs):
         num_workers=8,
     ) for phase in phases}
  
-    model, loss_funcs = gen_model(args, material_dict=None, verbose=True, debug=False)
+    model, loss_funcs = gen_model(args, material_dict=None, material=material, verbose=True, debug=False)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     for epoch in range(n_epoch):
@@ -116,7 +116,7 @@ def train_rigid(args, out_dir, data_dirs):
             torch.save(model.state_dict(), os.path.join(out_dir, 'checkpoints', f'model_{(epoch + 1)}.pth'))
 
 
-def test_rigid(args, out_dir, data_dirs, checkpoint):
+def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid'):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -125,7 +125,7 @@ def test_rigid(args, out_dir, data_dirs, checkpoint):
     # data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
     batch_size = 1
     save_interval = 1
-    dense = False  # shoe_debug_3: False
+    # dense = False  # shoe_debug_3 and shoe_debug_4: False
     dataset = RigidDynDataset(args, data_dirs, phase='test', dense=dense)
 
     dataloader = DataLoader(
@@ -140,7 +140,7 @@ def test_rigid(args, out_dir, data_dirs, checkpoint):
     os.makedirs(pred_graph_out_dir, exist_ok=True)
  
     model, loss_funcs = gen_model(args, checkpoint=os.path.join(out_dir, 'checkpoints', checkpoint),
-                                  material_dict=None, verbose=True, debug=False)
+                                  material_dict=None, material=material, verbose=True, debug=False)
     model.to(device)
 
     with torch.no_grad():
@@ -190,36 +190,58 @@ def test_rigid(args, out_dir, data_dirs, checkpoint):
 
 if __name__ == "__main__":
     args = gen_args()
-    out_dir = "../log/shoe_debug_4"
-    train_data_dirs = {
-        "train": [
-            "../data/2023-08-30-03-04-49-509758",
-            "../data/2023-08-30-02-02-53-617979",
-            "../data/2023-08-30-01-45-16-257548",
-            "../data/2023-08-23-12-23-07-775716",
-            "../data/2023-08-30-02-20-39-572700",
-            "../data/2023-08-30-03-44-14-098121",
-            "../data/2023-08-30-00-54-02-790828",
-            "../data/2023-08-30-02-48-27-532912",
-            "../data/2023-08-29-17-49-04-904390",
-            "../data/2023-08-30-03-27-55-702301",
-            "../data/2023-08-29-18-07-15-165315",
-            "../data/2023-08-23-12-17-53-370195",
-            "../data/2023-08-30-04-16-04-497588",
-            # "../data/2023-08-29-21-23-47-258600",
-            "../data/2023-08-30-04-00-39-286249",
-            "../data/2023-08-29-20-10-13-123194",
-            "../data/2023-09-04-18-26-45-932029",
-            "../data/2023-08-30-00-47-16-839238",
-        ],
-        "valid": [
-            "../data/2023-08-23-12-08-12-201998",
-            "../data/2023-09-04-18-42-27-707743",
-        ],
-    }
-    # train_rigid(args, out_dir, train_data_dirs)
 
-    test_data_dirs = "../data/2023-08-23-12-08-12-201998"  # not in training set
-    # test_data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
-    checkpoint = "model_2000.pth"
-    test_rigid(args, out_dir, test_data_dirs, checkpoint)
+    if False:
+        # out_dir = "../log/shoe_debug_4"  # shoe_debug_4: dense=False, final version
+        # out_dir = "../log/shoe_debug_5"  # shoe_debug_5: dense=True
+        out_dir = "../log/shoe_debug_6"
+        dense = False
+        train_data_dirs = {
+            "train": [
+                "../data/2023-08-30-03-04-49-509758",
+                "../data/2023-08-30-02-02-53-617979",
+                "../data/2023-08-30-01-45-16-257548",
+                "../data/2023-08-23-12-23-07-775716",
+                "../data/2023-08-30-02-20-39-572700",
+                "../data/2023-08-30-03-44-14-098121",
+                "../data/2023-08-30-00-54-02-790828",
+                "../data/2023-08-30-02-48-27-532912",
+                "../data/2023-08-29-17-49-04-904390",
+                "../data/2023-08-30-03-27-55-702301",
+                "../data/2023-08-29-18-07-15-165315",
+                "../data/2023-08-23-12-17-53-370195",
+                "../data/2023-08-30-04-16-04-497588",
+                # "../data/2023-08-29-21-23-47-258600",
+                "../data/2023-08-30-04-00-39-286249",
+                "../data/2023-08-29-20-10-13-123194",
+                "../data/2023-09-04-18-26-45-932029",
+                "../data/2023-08-30-00-47-16-839238",
+            ],
+            "valid": [
+                "../data/2023-08-23-12-08-12-201998",
+                "../data/2023-09-04-18-42-27-707743",
+            ],
+        }
+        # train_rigid(args, out_dir, train_data_dirs, dense)
+
+        test_data_dirs = "../data/2023-08-23-12-08-12-201998"  # not in training set
+        # test_data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
+        checkpoint = "model_1000.pth"
+        test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)
+    
+    else:
+        out_dir = "../log/shirt_debug_1"
+        dense = False
+        train_data_dirs = {
+            "train": [
+                "../data/shirt",
+            ],
+            "valid": [
+                "../data/shirt",
+            ],
+        }
+        # train_rigid(args, out_dir, train_data_dirs, dense, material='cloth')
+
+        test_data_dirs = "../data/shirt"  # training set
+        checkpoint = "model_2000.pth"
+        test_rigid(args, out_dir, test_data_dirs, checkpoint, dense, material='cloth')

@@ -118,6 +118,8 @@ class DynamicsPredictor(nn.Module):
             self.non_rigid_predictor = None
         if kwargs["predict_rigid"]:
             self.rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, kwargs["rigid_out_dim"])
+        else:
+            self.rigid_predictor = None
         
         if verbose:
             print("DynamicsPredictor initialized")
@@ -227,13 +229,13 @@ class DynamicsPredictor(nn.Module):
         if args.action_dim > 0:
             assert action is not None
             # action: B x N x action_dim
-            action_on_particles = False
-            if action_on_particles:
-                action_s = torch.zeros(B, n_s, self.action_dim).to(args.device)
-                action = torch.cat([action, action_s], 1)
-            else:  # action on shape particles
-                action_p = torch.zeros(B, n_p, self.action_dim).to(args.device)
-                action = torch.cat([action_p, action], 1)    
+            # action_on_particles = False
+            # if action_on_particles:
+            #     action_s = torch.zeros(B, n_s, args.action_dim).to(args.device)
+            #     action = torch.cat([action, action_s], 1)
+            # else:  # action on shape particles
+            #     action_p = torch.zeros(B, n_p, args.action_dim).to(args.device)
+            #     action = torch.cat([action_p, action], 1)    
 
             # p_inputs: B x N x (... + action_dim)
             p_inputs = torch.cat([p_inputs, action], 2)

@@ -61,6 +61,24 @@ class MultiviewDataparser:
             self.cam_extrinsics = [np.load(extr_dir[i]) for i in range(n_cameras)]  # (4, 4) * n_cameras
             # import ipdb; ipdb.set_trace()
         
+        elif dataset_name == "flex":
+            n_cameras = 4  # TODO: support episode indexing
+            self.rgb_imgs = []
+            self.depth_imgs = []
+            for i in range(1, n_cameras + 1):
+                rgb_img = cv2.imread(data_dir + f"camera_{i}/episode_0/{img_index}_color.png")
+                rgb_img = rgb_img[:, :, :3]
+                rgb_img = cv2.cvtColor(rgb_img, cv2.COLOR_BGR2RGB)
+                rgb_img = Image.fromarray(rgb_img)
+                self.rgb_imgs.append(rgb_img)
+
+                depth_img = cv2.imread(data_dir + f"camera_{i}/episode_0/{img_index}_depth.png", cv2.IMREAD_UNCHANGED)
+                depth_img = depth_img.astype(np.float32) / 1000.0
+                depth_img = Image.fromarray(depth_img)
+                self.depth_imgs.append(depth_img)
+            import ipdb; ipdb.set_trace()
+            # self.rgb_imgs = [Image.open(data_dir + f"camera_{i}/episode_0/{img_index}_color.png").convert('RGB') for i in range(1, n_cameras + 1)]
+            # self.depth_imgs = [Image.open(data_dir + f"camera_{i}/episode_0/{img_index}_depth.png") for i in range(1, n_cameras + 1)]
         else:
             raise NotImplementedError
     
