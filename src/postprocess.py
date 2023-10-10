@@ -210,9 +210,21 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
 if __name__ == "__main__":
     args = gen_args()
     _ = gen_model(args, material_dict=None, debug=True)
+
+    # shoe-pushing, sparse
     # data_dir = "../log/shoe_debug_6/"
     # orig_data_dir = "../data/2023-08-23-12-08-12-201998"  # not in training set
-    # # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
-    data_dir = "../log/shirt_debug_1"
+    # orig_data_dir = "../data/2023-09-04-18-42-27-707743"  # not in training set
+    # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
+
+    # shoe-pushing, dense
+    # data_dir = "../log/shoe_debug_7/"
+    # orig_data_dir = "../data/2023-08-23-12-08-12-201998"  # not in training set
+    # orig_data_dir = "../data/2023-09-04-18-42-27-707743"  # not in training set
+    # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
+
+    # cloth-pushing
+    data_dir = "../log/shirt_debug_3"
     orig_data_dir = "../data/shirt"
+
     postprocess_graph(args, data_dir, orig_data_dir)

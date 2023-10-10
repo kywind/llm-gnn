@@ -20,7 +20,8 @@ def load_particles(args, data_dir):
     num_frames = len(list(glob.glob(os.path.join(data_dir, f"camera_1/episode_{episode_idx}/*_color.png"))))
 
     # get point merge mask
-    for fi in range(num_frames - 1):
+    # for fi in range(num_frames - 1):
+    for fi in range(1):
         particle_test_list = []
         for cam_idx in camera_indices:
             particle = np.load(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{fi}_particles.npy"))[:, :3]
@@ -83,6 +84,7 @@ def load_particles(args, data_dir):
         dist_max = dist_list.max(0)
         dist_max_median = np.median(dist_max)
         valid_particle_mask = dist_max < dist_max_median
+        # valid_particle_mask = dist_max < 0
 
         cam_valid_img_vis = True
         if cam_valid_img_vis:
@@ -268,7 +270,7 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
         attrs[max_nobj : max_nobj + eef_kp_num, 1] = 1.
 
         # construct relations (density as hyperparameter)
-        adj_thresh = 0.2
+        adj_thresh = 1
         states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
         Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
                                              mask=torch.tensor(state_mask).unsqueeze(0), 
@@ -335,5 +337,6 @@ if __name__ == "__main__":
     ]
     for data_dir in data_dir_list:
         if os.path.isdir(data_dir):
+            # load_particles(args, data_dir)
             extract_pushes(args, data_dir)
             preprocess_graph(args, data_dir)

@@ -58,7 +58,7 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         args.state_dim = 3  # x, y, z
         args.offset_dim = 0
         args.action_dim = 3
-        args.pstep = 4
+        args.pstep = 6
         args.time_step = 1
         args.dt = 1. / 60.
         args.sequence_length = 4

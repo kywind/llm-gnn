@@ -21,6 +21,7 @@ class RigidDynDataset(Dataset):
     def __init__(self, 
         args,
         data_dirs,
+        ratios,
         phase='train',
         dense=True,
     ):
@@ -40,6 +41,11 @@ class RigidDynDataset(Dataset):
             self.graph_paths.extend(graph_path_list)
             print(f'Found {len(graph_path_list)} graphs in {graph_dir}')
         print(f'Found {len(self.graph_paths)} graphs in total')
+
+        self.ratio = ratios[phase]
+        print(f'Taking ratio {self.ratio} of {len(self.graph_paths)} graphs')
+        self.graph_paths = self.graph_paths[int(len(self.graph_paths) * self.ratio[0]):int(len(self.graph_paths) * self.ratio[1])]
+        print(f'{phase} dataset has {len(self.graph_paths)} graphs')
 
     def __len__(self):
         return len(self.graph_paths)

@@ -699,7 +699,7 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
         attrs[obj_kp_num : obj_kp_num + ptcl_per_eef, 1] = 1.
 
         # construct relations (density as hyperparameter)
-        adj_thresh = 0.1
+        adj_thresh = 1
         states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
         Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
                                              mask=torch.tensor(state_mask).unsqueeze(0), 
