@@ -224,7 +224,12 @@ if __name__ == "__main__":
     # orig_data_dir = "../data/2023-08-23-12-23-07-775716"  # in training set
 
     # cloth-pushing
-    data_dir = "../log/shirt_debug_3"
-    orig_data_dir = "../data/shirt"
+    # data_dir = "../log/shirt_debug_3"
+    # orig_data_dir = "../data/shirt"
+
+    # shoe pushing, new random dataset
+    data_dir = "../log/rigid_debug_1"
+    orig_data_dir = "../data/2023-08-23-12-08-12-201998"
+    # orig_data_dir = "../data/2023-09-04-18-42-27-707743"
 
     postprocess_graph(args, data_dir, orig_data_dir)

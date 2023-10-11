@@ -123,16 +123,17 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
         shuffle=False,
         num_workers=8,
     )
-    # out_dir = "../log/shoe_debug_3"
-    if isinstance(data_dirs, dict):
-        data_dirs_test = data_dirs['test']
-        dd_name_list = []
-        for dd in data_dirs_test:
-            dd_name = dd.split('/')[-1]
-            dd_name_list.append(dd_name)
-        dd_names = '_'.join(dd_name_list)
-    else:
-        dd_names = data_dirs.split('/')[-1]
+    # TODO this does not work with postprocess.py
+    # if isinstance(data_dirs, dict):
+    #     data_dirs_test = data_dirs['test']
+    #     dd_name_list = []
+    #     for dd in data_dirs_test:
+    #         dd_name = dd.split('/')[-1]
+    #         dd_name_list.append(dd_name)
+    #     dd_names = '_'.join(dd_name_list)
+    # else:
+    #     dd_names = data_dirs.split('/')[-1]
+    dd_names = data_dirs.split('/')[-1]
     pred_graph_out_dir = os.path.join(out_dir, f"pred_graphs_{dd_names}")
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(pred_graph_out_dir, exist_ok=True)
@@ -217,14 +218,16 @@ if __name__ == "__main__":
             "../data/2023-09-04-18-42-27-707743",
         ],
     }
-    train_rigid(args, out_dir, train_data_dirs, dense)
+    # train_rigid(args, out_dir, train_data_dirs, dense)
 
-    test_data_dirs = {
-        "test": [
-            "../data/2023-08-23-12-08-12-201998",
-            "../data/2023-09-04-18-42-27-707743",
-        ],
-    }  # not in training set
+    # test_data_dirs = {
+    #     "test": [
+    #         "../data/2023-08-23-12-08-12-201998",
+    #         "../data/2023-09-04-18-42-27-707743",
+    #     ],
+    # }  # not in training set
+    test_data_dirs = "../data/2023-08-23-12-08-12-201998"  # not in training set
+    # test_data_dirs = "../data/2023-09-04-18-42-27-707743"  # not in training set
     # test_data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
     checkpoint = "model_2000.pth"
-    # test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)
+    test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)
