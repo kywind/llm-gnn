@@ -257,10 +257,10 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
 
         # construct instance information
         p_rigid = np.zeros(max_instance_num, dtype=np.float32)  # clothes are nonrigid
-        p_instance = np.zeros((obj_kp_num, max_instance_num), dtype=np.float32)
+        p_instance = np.zeros((max_nobj, max_instance_num), dtype=np.float32)
         for j in range(instance_num):
             p_instance[j * ptcl_per_instance : (j + 1) * ptcl_per_instance, j] = 1  # TODO different number of particles per instance
-        physics_param = np.zeros(obj_kp_num, dtype=np.float32)  # 1-dim
+        physics_param = np.zeros(max_nobj, dtype=np.float32)  # 1-dim
 
         # construct attributes
         attr_dim = 2
@@ -280,7 +280,7 @@ def preprocess_graph(args, data_dir, max_n=None, max_nobj=None, max_neef=None, m
 
         # action encoded as state_delta (only stored in eef keypoints)
         states_delta = np.zeros((max_nobj + max_neef, states.shape[-1]), dtype=np.float32)
-        states_delta[max_nobj : max_neef + eef_kp_num] = eef_kp[1] - eef_kp[0]
+        states_delta[max_nobj : max_nobj + eef_kp_num] = eef_kp[1] - eef_kp[0]
 
         # next state
         states_next = obj_kp_gt

@@ -5,6 +5,8 @@ import glob
 from PIL import Image
 import cv2
 import pickle as pkl
+import copy
+from dgl.geometry import farthest_point_sampler
 
 from config import gen_args
 from data.utils import label_colormap
@@ -150,7 +152,14 @@ def load_keypoints(args, data_dir):
             obj_kp = pkl.load(open(pkl_path, 'rb')) # list of (rand_ptcl_num, 3)
 
             top_k = 20
-            obj_kp = [kp[:top_k] for kp in obj_kp]
+            # top_k_samples = np.random.choice(obj_kp[0].shape[0], top_k, replace=False)
+            # obj_kp = [kp[top_k_samples] for kp in obj_kp]  # identical subsampling for all instances
+            for j in range(len(obj_kp)):
+                # farthest point sampling
+                particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
+                fps_idx_tensor = farthest_point_sampler(particle_tensor, top_k, start_idx=np.random.randint(0, obj_kp[j].shape[0]))[0]
+                fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+                obj_kp[j] = obj_kp[j][fps_idx]
             instance_num = len(obj_kp)
             ptcl_num = obj_kp[0].shape[0]
             obj_kp = np.concatenate(obj_kp, axis=0) # (N = instance_num * rand_ptcl_num, 3)
@@ -549,6 +558,229 @@ def extract_pushes(args, data_dir):  # save obj and eef keypoints
     np.savetxt(os.path.join(data_dir, 'push_t_list_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
 
 
+def extract_pushes_2(args, data_dir):  # save obj and eef keypoints, obj keypoints containing both start and end points
+    # pred_gap = 1  # TODO make this code compatible with pred_gap > 1
+    verbose = False
+    # create output dir
+    eef_kypts_dir = os.path.join(data_dir, 'eef_kypts_2') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
+    os.makedirs(eef_kypts_dir, exist_ok=True)
+    obj_kypts_dir = os.path.join(data_dir, 'obj_kypts_2') # list of (ptcl_num, 3) for each push, indexed by push_num (dense)
+    os.makedirs(obj_kypts_dir, exist_ok=True)
+    dense_eef_kypts_dir = os.path.join(data_dir, 'dense_eef_kypts_2')
+    os.makedirs(dense_eef_kypts_dir, exist_ok=True)
+    dense_obj_kypts_dir = os.path.join(data_dir, 'dense_obj_kypts_2')
+    os.makedirs(dense_obj_kypts_dir, exist_ok=True)
+    
+    # input dir
+    database_obj_kypts_dir = os.path.join(data_dir, 'obj_kypts_orig')
+
+    # extract push info
+    push_num = len(os.listdir(os.path.join(data_dir, 'push')))
+    push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
+    push_time = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_time.npy')) for i in range(push_num)]
+    push_pts = np.stack(push_pts, axis=0) # (push_num, 2, 3)
+    push_time = np.stack(push_time, axis=0) # (push_num, 2)
+
+    total_time = len(glob.glob(os.path.join(data_dir, 'camera_0/color/color_*.png')))
+    image_times = list(range(total_time))
+    timestamps = np.loadtxt(os.path.join(data_dir, 'timestamp.txt')) 
+    record_idx = 0
+
+    # extract finger info
+    base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
+    finger_points_in_finger_frame = np.array([[0.01,  -0.025, 0.014], # bottom right
+                                              [-0.01, -0.025, 0.014], # bottom left
+                                              [-0.01, -0.025, 0.051], # top left
+                                              [0.01,  -0.025, 0.051]]) # top right
+
+    last_mode = 'idle'
+    curr_mode = 'idle'
+    start_push_pt = np.zeros(3)
+    last_push_pt = np.zeros(3)
+    curr_push_pt = np.zeros(3)
+    start_obj_pt = None
+    last_obj_pt = None
+    curr_obj_pt = None
+    push_idx = 0
+    t_list_dense = []
+    t_list = []
+    offset = None
+    for t in image_times:
+        is_start = False
+        is_end = False
+        # detect whether in push
+        for p_idx, pt in enumerate(push_time):
+            if timestamps[t] >= pt[0] and timestamps[t] < pt[1]:
+                curr_mode = 'push'
+                try:
+                    assert push_idx == p_idx
+                except:
+                    print(f"no frames recorded in directory {data_dir}, push {push_idx - 1}")
+                # for sparse
+                if timestamps[t - 1] < pt[0]:
+                    is_start = True
+                    t_last = t
+                elif timestamps[t + 1] >= pt[1]:
+                    is_end = True
+                    t_curr = t
+                    t_list.append([t_last, t_curr])
+                    t_last, t_curr = None, None
+                break
+        else:
+            curr_mode = 'idle'
+        
+        if curr_mode == 'push' and last_mode == 'idle':
+            assert is_start
+            # initialize obj keypoints for each push
+            if verbose: print(f'starting push at time {t}')
+            # NOTE new obj_kypts loading method
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                start_obj_pt = pkl.load(f)
+                last_obj_pt = start_obj_pt  # if record_idx is not zero, last_obj_pt should be roughly the same as start_obj_pt
+                if verbose: print(f'starting obj pt set at time {t}')
+            # initialize eef keypoints for each push
+            last_push_pt = push_pts[push_idx, 0]
+            start_push_pt = push_pts[push_idx, 0]
+            if verbose: print(f'starting eef pt set at time {t}')
+            offset = None
+            t_last_dense = t
+        
+        # extract finger points
+        left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{t}.txt'))
+        right_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'right_finger', f'{t}.txt'))
+
+        left_finger_in_tag_frame = base_pose_in_tag @ left_finger_in_base_frame
+        right_finger_in_tag_frame = base_pose_in_tag @ right_finger_in_base_frame
+
+        N = finger_points_in_finger_frame.shape[0]
+        finger_points_in_finger_frame_homo = np.concatenate([finger_points_in_finger_frame, np.ones((N, 1))], axis=1) # (N, 4)
+        
+        left_finger_points = left_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+        right_finger_points = right_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+
+        left_finger_points = left_finger_points.T # (N, 4)
+        right_finger_points = right_finger_points.T # (N, 4)
+        
+        curr_push_pt = np.concatenate([left_finger_points[:, :3], right_finger_points[:, :3]], axis=0).mean(axis=0) # [3]  # ocurrent push location
+        
+        # calculate calibration offset between finger points and pushes
+        if curr_mode == 'push' and last_mode == 'idle':
+            assert np.linalg.norm(curr_push_pt - last_push_pt) < 0.02
+            offset = last_push_pt - curr_push_pt
+        
+        # fix current push with the offset
+        if (curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
+            assert offset is not None
+            curr_push_pt += offset
+
+        ## dense
+        # save points in push
+        # TODO: 0.02 is a hyperparameter worth tuning
+        if (np.linalg.norm(curr_push_pt - last_push_pt) >= 0.02 and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
+            # store obj kypts at current state to next record_idx
+            # os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
+            
+            # NOTE new obj_kypts saving method
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                curr_obj_pt = pkl.load(f)
+            obj_pts = [last_obj_pt, curr_obj_pt]
+            with open(os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl"), 'wb') as f:
+                pkl.dump(obj_pts, f)
+            
+            # print('loading obj keypoints for push', record_idx + 1)
+            # store the push between last state and current state to current record_idx
+            curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
+            t_curr_dense = t
+            t_list_dense.append([t_last_dense, t_curr_dense])
+
+            eef_pts = push_to_eef_pts(curr_push) # (2, eef_ptcl_num, 3)
+            np.save(os.path.join(dense_eef_kypts_dir, f'{record_idx:06}.npy'), eef_pts)
+            record_idx += 1
+            last_push_pt = curr_push_pt.copy()
+            last_obj_pt = copy.deepcopy(curr_obj_pt)
+
+            t_last_dense = t_curr_dense
+        
+        ## sparse (does not use curr_push)
+        # if (is_start and push_idx == 0):  # only satisfy once
+        #     os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(obj_kypts_dir, f"{push_idx:06}.pkl")}')
+        # elif is_end:  # once per push
+        #     os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(obj_kypts_dir, f"{(push_idx+1):06}.pkl")}')
+        
+        # NOTE new obj_kypts saving method
+        if is_end:  # once per push
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                curr_obj_pt = pkl.load(f)
+            obj_pts = [start_obj_pt, curr_obj_pt]
+            if verbose: print(f'ending obj pt set at time {t}')
+            with open(os.path.join(obj_kypts_dir, f"{push_idx:06}.pkl"), 'wb') as f:
+                pkl.dump(obj_pts, f)
+            if verbose: print(f'saving obj pt pairs to push idx {push_idx}')
+
+        if is_end:  # once per push
+            # push_pts[push_idx] should be storing the same points as curr_push_pt?
+            assert np.linalg.norm(start_push_pt - push_pts[push_idx, 0]) < 0.01
+            assert np.linalg.norm(curr_push_pt - push_pts[push_idx, 1]) < 0.01
+            if verbose: print(f'ending eef pt set at time {t}')
+            eef_pts = push_to_eef_pts(push_pts[push_idx].reshape(-1)) # (2, eef_ptcl_num, 3)
+            np.save(os.path.join(eef_kypts_dir, f'{push_idx:06}.npy'), eef_pts)
+            if verbose: print(f'saving eef pt pairs to push idx {push_idx}')
+
+        # update push index
+        if curr_mode == 'idle' and last_mode == 'push':
+            push_idx += 1
+        last_mode = curr_mode
+
+    np.savetxt(os.path.join(data_dir, 'push_t_list_2.txt'), np.array(t_list).astype(np.int32), fmt='%i')
+    np.savetxt(os.path.join(data_dir, 'push_t_list_2_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
+
+
+def kypts_verification(args, data_dir):  # ensure dense/sparse obj/eef kypts derived by extract_pushes_2 are continuous in time
+    eef_subdirs = ['eef_kypts_2', 'dense_eef_kypts_2']
+    obj_subdirs = ['obj_kypts_2', 'dense_obj_kypts_2']
+    t_list_subdirs = ['push_t_list_2', 'push_t_list_2_dense']
+    for i in range(2):
+        eef_subdir = eef_subdirs[i]
+        obj_subdir = obj_subdirs[i]
+        eef_kypts_dir = os.path.join(data_dir, eef_subdir)
+        obj_kypts_dir = os.path.join(data_dir, obj_subdir)
+        eef_kypts_paths = sorted(list(glob.glob(os.path.join(eef_kypts_dir, '*.npy'))))
+        obj_kypts_paths = sorted(list(glob.glob(os.path.join(obj_kypts_dir, '*.pkl'))))
+        t_list = np.loadtxt(os.path.join(data_dir, t_list_subdirs[i] + '.txt'))
+        assert len(eef_kypts_paths) == len(obj_kypts_paths)
+        for j in range(len(eef_kypts_paths) - 1):
+            eef_kypts_path = eef_kypts_paths[j]
+            obj_kypts_path = obj_kypts_paths[j]
+            t = t_list[j]
+            eef_kypts = np.load(eef_kypts_path)
+            with open(obj_kypts_path, 'rb') as f:
+                obj_kypts = pkl.load(f)
+            
+            eef_kypts_next_path = eef_kypts_paths[j + 1]
+            obj_kypts_next_path = obj_kypts_paths[j + 1]
+            t_next = t_list[j + 1]
+            eef_kypts_next = np.load(eef_kypts_next_path)
+            with open(obj_kypts_next_path, 'rb') as f:
+                obj_kypts_next = pkl.load(f)
+            
+            if data_dir == "../data/2023-08-30-03-27-55-702301":
+                if i == 0 and j == 9 or i == 1 and j == 44: continue  # error in data collection, frame 2721 ~ 2784
+            
+            if t[1] == t_next[0]:  # pushes should be continuous
+                try: assert np.linalg.norm(eef_kypts[1, :, :].mean(0) - eef_kypts_next[0, :, :].mean(0)) < 0.01
+                except: import ipdb; ipdb.set_trace()
+            
+            # obj kypts should be continuous at any time
+            obj_len = len(obj_kypts[0])  # number of instances
+            for k in range(obj_len):
+                try: 
+                    assert np.linalg.norm(obj_kypts[1][k].mean(0) - obj_kypts_next[0][k].mean(0)) < 0.04
+                    assert np.linalg.norm(obj_kypts[1][k].max(0) - obj_kypts_next[0][k].max(0)) < 0.04
+                    assert np.linalg.norm(obj_kypts[1][k].min(0) - obj_kypts_next[0][k].min(0)) < 0.04
+                except: import ipdb; ipdb.set_trace()
+    print("kypts verification passed")
+
+
 def construct_edges_from_states(states, adj_thresh, mask, eef_mask, no_self_edge=False):  # helper function for construct_graph
     # :param states: (B, N, state_dim) torch tensor
     # :param adj_thresh: float
@@ -886,6 +1118,9 @@ if __name__ == "__main__":
             print(data_dir)
             # load_fingers(args, data_dir, idx=12)
             # load_pushes(args, data_dir, idx=12)
-            extract_pushes(args, data_dir)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=True)
-            preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=False)
+            # load_keypoints(args, data_dir)
+            # extract_pushes(args, data_dir)
+            extract_pushes_2(args, data_dir)
+            # kypts_verification(args, data_dir)
+            # preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=True)
+            # preprocess_graph(args, data_dir, max_n=2, max_nobj=40, max_neef=8, max_nR=200, dense=False)
