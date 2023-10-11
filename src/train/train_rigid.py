@@ -115,7 +115,7 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
     # dense = False  # shoe_debug_3 and shoe_debug_4: False
     if ratios is None:
         ratios = {"train": [0, 1], "valid": [0, 1], "test": [0, 1]}
-    dataset = RigidDynDataset(args, data_dirs, ratios, phase='test', dense=dense)
+    dataset = RandomRigidDynDataset(args, data_dirs, ratios, phase='test', dense=dense)
 
     dataloader = DataLoader(
         dataset,

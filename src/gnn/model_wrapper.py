@@ -34,8 +34,8 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         # particle encoder
         args.attr_dim = 2  # object and end effector
         args.n_his = 1  # TODO consider history
-        args.state_dim = 3  # x, y, z
-        args.offset_dim = 3  # same as state_dim
+        args.state_dim = 0  # x, y, z (no absolute position)
+        args.offset_dim = 0  # same as state_dim (no absolute position)
         args.action_dim = 3
         args.pstep = 3
         args.time_step = 1
@@ -45,10 +45,11 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         args.density_dim = 0  # particle density
 
         # relation encoder
-        args.rel_particle_dim = -1  # input dim
-        args.rel_attr_dim = 0  # no attribute
+        # args.rel_particle_dim = -1  # input dim
+        args.rel_particle_dim = 0
+        args.rel_attr_dim = 2  # no attribute
         args.rel_group_dim = 1  # sum of difference of group one-hot vector
-        args.rel_distance_dim = 0  # no distance
+        args.rel_distance_dim = 3  # no distance
         args.rel_density_dim = 0  # no density
     
     elif args.material == 'cloth':

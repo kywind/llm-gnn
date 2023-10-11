@@ -139,6 +139,7 @@ class DynamicsPredictor(nn.Module):
         n_p = p_instance.size(1)  # number of object particles (that need prediction)
         n_s = attrs.size(1) - n_p  # number of shape particles that do not need prediction
         n_rel = Rr.size(1)  # number of relations
+        state_dim = state.size(3)  # state dimension
 
         # attrs: B x N x attr_dim
         # state: B x n_his x N x state_dim
@@ -175,20 +176,25 @@ class DynamicsPredictor(nn.Module):
         # [0, n_his - 1): state_residual
         # [n_his - 1, n_his): the current position
         state_norm = torch.cat([state_res_norm, state_cur_norm], 1)
-        state_norm_t = state_norm.transpose(1, 2).contiguous().view(B, N, args.n_his * args.state_dim)
+        state_norm_t = state_norm.transpose(1, 2).contiguous().view(B, N, args.n_his * state_dim)
 
-        # p_inputs: B x N x (attr_dim + n_his * state_dim)
-        p_inputs = torch.cat([attrs, state_norm_t], 2)
+        # p_inputs: B x N x attr_dim
+        p_inputs = attrs
+
+        if args.state_dim > 0:
+            # add state to attr
+            # p_inputs: B x N x (attr_dim + n_his * state_dim)
+            p_inputs = torch.cat([attrs, state_norm_t], 2)
+
+        # instance_center: B x n_instance x (n_his * state_dim)
+        instance_center = p_instance.transpose(1, 2).bmm(state_norm_t[:, :n_p])
+        instance_center /= torch.sum(p_instance, 1).unsqueeze(-1) + self.eps
 
         # other inputs
         if args.offset_dim > 0:
             # add offset to center-of-mass for rigids to attr
             # offset: B x N x (n_his * state_dim)
-            offset = torch.zeros(B, N, args.n_his * args.state_dim).to(args.device)
-
-            # instance_center: B x n_instance x (n_his * state_dim)
-            instance_center = p_instance.transpose(1, 2).bmm(state_norm_t[:, :n_p])
-            instance_center /= torch.sum(p_instance, 1).unsqueeze(-1) + self.eps
+            offset = torch.zeros(B, N, args.n_his * state_dim).to(args.device)
 
             # c_per_particle: B x n_p x (n_his * state_dim)
             # particle offset: B x n_p x (n_his * state_dim)
@@ -374,14 +380,14 @@ class DynamicsPredictor(nn.Module):
             b = instance_rigid_params[:, 4:]
             if self.state_normalize:  # denormalize
                 b = b * std_d + mean_d
-            b = b.view(B * n_instance, 1, args.state_dim)
+            b = b.view(B * n_instance, 1, state_dim)
             if verbose:
                 print("b", b.size(), "should be (B x n_instance, 1, state_dim)")
 
             # current particle state
             # p_0: B x 1 x n_p x state_dim -> (B * n_instance) x n_p x state_dim
             p_0 = state[:, -1:, :n_p]
-            p_0 = p_0.repeat(1, n_instance, 1, 1).view(B * n_instance, n_p, args.state_dim)
+            p_0 = p_0.repeat(1, n_instance, 1, 1).view(B * n_instance, n_p, state_dim)
             if verbose:
                 print("p_0", p_0.size(), "should be (B x n_instance, n_p, state_dim)")
 
@@ -389,7 +395,7 @@ class DynamicsPredictor(nn.Module):
             c = instance_center[:, :, -3:]
             if self.state_normalize:  # denormalize
                 c = c * std_p + mean_p
-            c = c.view(B * n_instance, 1, args.state_dim)
+            c = c.view(B * n_instance, 1, state_dim)
             if verbose:
                 print("c", c.size(), "should be (B x n_instance, 1, state_dim)")
 
@@ -400,7 +406,7 @@ class DynamicsPredictor(nn.Module):
 
             # compute difference for per-particle rigid motion
             # rigid_motion: B x n_instance x n_p x state_dim
-            rigid_motion = (p_1 - p_0).view(B, n_instance, n_p, args.state_dim)
+            rigid_motion = (p_1 - p_0).view(B, n_instance, n_p, state_dim)
             if self.state_normalize:  # normalize
                 rigid_motion = (rigid_motion - mean_d) / std_d
         
@@ -411,7 +417,7 @@ class DynamicsPredictor(nn.Module):
         rigid_part = obj_mask & rigid_part
         non_rigid_part = obj_mask & non_rigid_part
 
-        pred_motion = torch.zeros(B, n_p, args.state_dim).to(args.device)
+        pred_motion = torch.zeros(B, n_p, state_dim).to(args.device)
         if self.non_rigid_predictor is not None:
             pred_motion[non_rigid_part] = non_rigid_motion[non_rigid_part]
         if self.rigid_predictor is not None:
