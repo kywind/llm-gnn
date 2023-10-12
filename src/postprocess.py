@@ -59,15 +59,21 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
 
     num_graphs = len(graphs)
 
-    img_vis = False
+    img_vis = True
     if img_vis:
-        t_list = os.path.join(orig_data_dir, "push_t_list_dense.txt")
-        save_interval = 10
+        vis_dir = os.path.join("vis", f"vis_pred_{orig_data_dir.split('/')[-1]}")
+        os.makedirs(vis_dir, exist_ok=True)
+        t_list = os.path.join(orig_data_dir, "push_t_list.txt")
+        save_interval = 1
         t_list = np.loadtxt(t_list)
         t_list = t_list[::save_interval]
         graph_frame_dict = {int(i): [int(t[0]), int(t[1])] for i, t in enumerate(t_list)}
 
     camera_indices = [0, 1, 2, 3]
+
+    pts_prev_proj_pred = [None] * 4
+    pts_prev_proj_orig = [None] * 4
+    pts_prev_proj_gt = [None] * 4
 
     for graph_id in range(num_graphs):
         # get keypoints 
@@ -136,10 +142,10 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
         lst.lines = o3d.utility.Vector2iVector(lines)
         lst.colors = o3d.utility.Vector3dVector(line_colors)
 
-        o3d.visualization.draw_geometries([pcd, pcd_pred, pcd_gt, lst])
+        # o3d.visualization.draw_geometries([pcd, pcd_pred, pcd_gt, lst])
+        # o3d.visualization.draw_geometries([pcd, lst])
 
         # draw on images
-        img_vis = False
         if img_vis:
             frame_id_start, frame_id_end = graph_frame_dict[graph_id]
             for cam_id in camera_indices:
@@ -147,64 +153,61 @@ def postprocess_graph(args, data_dir, orig_data_dir=None):
                 intr = np.load(os.path.join(orig_data_dir, f"camera_{cam_id}", "camera_params.npy"))
                 extr = np.load(os.path.join(orig_data_dir, f"camera_{cam_id}", "camera_extrinsics.npy"))
                 fx, fy, cx, cy = intr
-
-                pts = orig_state_valid
-                pts_cam = np.matmul(extr, np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T).T
-                pts_cam = pts_cam[:, :3] / pts_cam[:, 3:]
-
-                pts_proj = np.zeros((pts_cam.shape[0], 2))
-                pts_proj[:, 0] = fx * pts_cam[:, 0] / pts_cam[:, 2] + cx
-                pts_proj[:, 1] = fy * pts_cam[:, 1] / pts_cam[:, 2] + cy
-                pts_proj = pts_proj.astype(np.int32)
-
                 img = cv2.imread(img_dir)
-                for j in range(pts_proj.shape[0]):
-                    cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (0, 255, 0), -1)
-                cv2.imwrite(f"{graph_id}_{cam_id}.png", img)
 
-        continue
-        # raise
+                vis_orig = False
+                vis_pred = True
+                vis_gt = False
+                if vis_orig:
+                    pts = orig_state_valid
+                    pts_cam = np.matmul(extr, np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T).T
+                    pts_cam = pts_cam[:, :3] / pts_cam[:, 3:]
 
-        # construct relations (density as hyperparameter)
-        adj_thresh = 0.1
-        states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
-        Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, exclude_last_N=eef_kp_num)
-        Rr, Rs = Rr.squeeze(0).numpy(), Rs.squeeze(0).numpy()
+                    pts_proj = np.zeros((pts_cam.shape[0], 2))
+                    pts_proj[:, 0] = fx * pts_cam[:, 0] / pts_cam[:, 2] + cx
+                    pts_proj[:, 1] = fy * pts_cam[:, 1] / pts_cam[:, 2] + cy
+                    pts_proj = pts_proj.astype(np.int32)
 
-        # action encoded as state_delta (only stored in eef keypoints)
-        states_delta = np.zeros((obj_kp_num + eef_kp_num, states.shape[-1]))
-        states_delta[-eef_kp_num:] = eef_kp[1] - eef_kp[0]
+                    for j in range(orig_state_p_valid.shape[0]):
+                        cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (0, 0, 255), -1)
+                    
+                    for j in range(orig_state_p_valid.shape[0], orig_state_valid.shape[0]):
+                        cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (0, 255, 255), -1)
 
-        # next state
-        pred_gap = 1  # TODO make this code compatible with pred_gap > 1
-        obj_kp_path_next = obj_kp_paths[i + pred_gap]
-        obj_kp_next = pkl.load(open(obj_kp_path_next, 'rb')) # list of (rand_ptcl_num, 3)
-        obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
-        obj_kp_next = np.concatenate(obj_kp_next, axis=0) # (N = instance_num * rand_ptcl_num, 3)
-        # eef_kp_path_next = os.path.join(eef_kp_dir, f'{i+pred_gap:06}.npy')
-        # eef_kp_next = np.load(eef_kp_path_next).astype(np.float32)   # (2, 8, 3)
-        # assert eef_kp_next is not None, print(eef_kp_path_next)
-        # assert np.max(eef_kp_next[0] - eef_kp[1]) < 4e-2, print(np.max(eef_kp_next[0] - eef_kp[1]))  # check consistency (need to handle jumps)
-        # states_next = np.concatenate([obj_kp_next, eef_kp_next[0]], axis=0)
-        states_next = np.concatenate([obj_kp_next, np.zeros_like(eef_kp[0])], axis=0)
+                if vis_pred:
+                    pts = pred_state_p_valid
+                    pts_cam = np.matmul(extr, np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T).T
+                    pts_cam = pts_cam[:, :3] / pts_cam[:, 3:]
 
-        # history state
-        states = states[None]  # n_his = 1  # TODO make this code compatible with n_his > 1
+                    pts_proj = np.zeros((pts_cam.shape[0], 2))
+                    pts_proj[:, 0] = fx * pts_cam[:, 0] / pts_cam[:, 2] + cx
+                    pts_proj[:, 1] = fy * pts_cam[:, 1] / pts_cam[:, 2] + cy
+                    pts_proj = pts_proj.astype(np.int32)
 
-        # save graph
-        graph = {
-            "attrs": attrs, 
-            "state": states, 
-            "action": states_delta,
-            "Rr": Rr, 
-            "Rs": Rs,
-            "p_rigid": p_rigid,
-            "p_instance": p_instance,
-            "physics_param": physics_param,
-            "particle_den": np.array([adj_thresh]),
-            "state_next": states_next,  # only obj keypoints contain useful info
-        }
-        graph_list.append(graph)
+                    for j in range(pts_proj.shape[0]):
+                        cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (255, 0, 0), -1)
+                    
+                    if pts_prev_proj_pred[cam_id] is not None:
+                        for j in range(pts_prev_proj_pred[cam_id].shape[0]):
+                            cv2.circle(img, (pts_prev_proj_pred[cam_id][j, 0], pts_prev_proj_pred[cam_id][j, 1]), 3, (0, 255, 255), -1)
+                    
+                    pts_prev_proj_pred[cam_id] = pts_proj
+                
+                if vis_gt:
+                    pts = gt_state_p_valid
+                    pts_cam = np.matmul(extr, np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T).T
+                    pts_cam = pts_cam[:, :3] / pts_cam[:, 3:]
+
+                    pts_proj = np.zeros((pts_cam.shape[0], 2))
+                    pts_proj[:, 0] = fx * pts_cam[:, 0] / pts_cam[:, 2] + cx
+                    pts_proj[:, 1] = fy * pts_cam[:, 1] / pts_cam[:, 2] + cy
+                    pts_proj = pts_proj.astype(np.int32)
+
+                    for j in range(pts_proj.shape[0]):
+                        cv2.circle(img, (pts_proj[j, 0], pts_proj[j, 1]), 3, (0, 255, 0), -1)
+
+                cv2.imwrite(os.path.join(vis_dir, f"{graph_id}_{cam_id}.png"), img)
+
 
 
 if __name__ == "__main__":

@@ -119,6 +119,8 @@ def load_particles(args, data_dir):
 def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max_nR=None):
     camera_indices = [1, 2, 3, 4]
     cam_idx = 1  # follow camera 1's particles
+    fixed_idx = False  # use same sampling indices for all frames
+    fps_idx = None
 
     eef_kypts_dir = os.path.join(data_dir, 'eef_kypts') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
     os.makedirs(eef_kypts_dir, exist_ok=True)
@@ -145,10 +147,12 @@ def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max
             particle_next = np.load(os.path.join(data_dir, f"camera_{cam_idx}/episode_{episode_idx}/{fi+delta_fi}_particles.npy"))
             
             # farthest sampling to get a set of particles for current frame
-            n_particle = 50
-            particle_tensor = torch.from_numpy(particle).float()[None, ...]
-            fps_idx_tensor = farthest_point_sampler(particle_tensor, n_particle)[0]
-            fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+            if (fixed_idx and fps_idx is None) or not fixed_idx:
+                n_particle = 50
+                particle_tensor = torch.from_numpy(particle).float()[None, ...]
+                fps_idx_tensor = farthest_point_sampler(particle_tensor, n_particle)[0]
+                fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+
             particle = particle[fps_idx, :3]
             particle_next = particle_next[fps_idx, :3]
 

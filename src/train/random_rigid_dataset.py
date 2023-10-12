@@ -82,6 +82,7 @@ class RandomRigidDynDataset(Dataset):
         ratios,
         phase='train',
         dense=True,
+        fixed_idx=False,
     ):
         self.args = args
         self.phase = phase
@@ -119,6 +120,10 @@ class RandomRigidDynDataset(Dataset):
         self.max_neef = 8  # max number of eef points
         self.max_nR = 500  # max number of relations
 
+        self.fixed_idx = fixed_idx
+        self.fps_idx_list = []
+        self.top_k = 20
+
         self.adj_thresh_range = [0.1, 0.2]
 
 
@@ -144,23 +149,21 @@ class RandomRigidDynDataset(Dataset):
         eef_kp_num = eef_kp.shape[1]
 
         # TODO replace this sampling to a random version
-        top_k = 20
-        fps_idx_list = []
-        for j in range(len(obj_kp)):
-            # farthest point sampling
-            particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
-            fps_idx_tensor = farthest_point_sampler(particle_tensor, top_k, start_idx=np.random.randint(0, obj_kp[j].shape[0]))[0]
-            fps_idx = fps_idx_tensor.numpy().astype(np.int32)
-            fps_idx_list.append(fps_idx)
-        obj_kp = [obj_kp[j][fps_idx] for j, fps_idx in enumerate(fps_idx_list)]
-        instance_num = len(obj_kp)
+        if not self.fixed_idx or (self.fixed_idx and self.fps_idx_list == []):
+            for j in range(len(obj_kp)):
+                # farthest point sampling
+                particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
+                fps_idx_tensor = farthest_point_sampler(particle_tensor, self.top_k, start_idx=np.random.randint(0, obj_kp[j].shape[0]))[0]
+                fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+                self.fps_idx_list.append(fps_idx)
+        obj_kp = [obj_kp[j][fps_idx] for j, fps_idx in enumerate(self.fps_idx_list)]
         instance_num = len(obj_kp)
         ptcl_per_instance = obj_kp[0].shape[0]
         obj_kp = np.concatenate(obj_kp, axis=0) # (N = instance_num * rand_ptcl_num, 3)
         obj_kp_num = obj_kp.shape[0]
 
         # obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
-        obj_kp_next = [obj_kp_next[j][fps_idx] for j, fps_idx in enumerate(fps_idx_list)]
+        obj_kp_next = [obj_kp_next[j][fps_idx] for j, fps_idx in enumerate(self.fps_idx_list)]
         obj_kp_next = np.concatenate(obj_kp_next, axis=0) # (N = instance_num * rand_ptcl_num, 3)
         assert obj_kp_next.shape[0] == obj_kp_num
 
