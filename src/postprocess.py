@@ -52,8 +52,8 @@ def construct_edges_from_states(states, adj_thresh, exclude_last_N):  # helper f
 
 def postprocess_graph(args, data_dir, orig_data_dir=None):
     graph_dir = os.path.join(data_dir, f"pred_graphs_{orig_data_dir.split('/')[-1]}")
-    save_dir = os.path.join(data_dir, f"vis_{orig_data_dir.split('/')[-1]}")
-    os.makedirs(save_dir, exist_ok=True)
+    # save_dir = os.path.join(data_dir, f"vis_{orig_data_dir.split('/')[-1]}")
+    # os.makedirs(save_dir, exist_ok=True)
 
     graphs = sorted(list(glob.glob(os.path.join(graph_dir, '*.pkl'))))
 
