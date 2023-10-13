@@ -150,6 +150,7 @@ class RandomRigidDynDataset(Dataset):
 
         # TODO replace this sampling to a random version
         if not self.fixed_idx or (self.fixed_idx and self.fps_idx_list == []):
+            self.fps_idx_list = []
             for j in range(len(obj_kp)):
                 # farthest point sampling
                 particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
