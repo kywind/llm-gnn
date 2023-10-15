@@ -35,7 +35,7 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         args.attr_dim = 2  # object and end effector
         args.n_his = 1  # TODO consider history
         args.state_dim = 0  # x, y, z (no absolute position)
-        args.offset_dim = 0  # same as state_dim (no absolute position)
+        args.offset_dim = 3  # offset does not contain absolute position
         args.action_dim = 3
         args.pstep = 3
         args.time_step = 1

@@ -5,6 +5,7 @@ import sys
 import torch
 import torchvision
 import torchvision.transforms as transforms
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -13,6 +14,7 @@ from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed
 
 from train.random_rigid_dataset import RandomRigidDynDataset
+from train.multistep_rigid_dataset import MultistepRigidDynDataset, construct_edges_from_states
 import open3d as o3d
 
 import cv2
@@ -26,23 +28,19 @@ def grad_manager(phase):
         return torch.enable_grad()
     else:
         return torch.no_grad()
-    
-def parse_gt(data):
-    gt_pos = data['pos'][:, 1:, :, :]
-    gt_pos = gt_pos.reshape(gt_pos.shape[0], gt_pos.shape[1], -1)
-    return gt_pos
 
-def truncate_graph(data):
-    Rr = data['Rr']
-    Rs = data['Rs']
-    Rr_nonzero = torch.sum(Rr, dim=-1) > 0
-    Rs_nonzero = torch.sum(Rs, dim=-1) > 0
-    n_Rr = torch.max(Rr_nonzero.sum(1), dim=0)[0].item()
-    n_Rs = torch.max(Rs_nonzero.sum(1), dim=0)[0].item()
-    max_n = max(n_Rr, n_Rs)
-    data['Rr'] = data['Rr'][:, :max_n, :]
-    data['Rs'] = data['Rs'][:, :max_n, :]
-    return data
+def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2], max_nR=500):
+    # construct relations (density as hyperparameter)
+    bsz = states.shape[0]  # states: B, n_his, N, 3
+    adj_thresh = np.random.uniform(*adj_thresh_range, (bsz,))
+    adj_thresh = torch.tensor(adj_thresh).to(states.device)
+    Rr, Rs = construct_edges_from_states(states[:, -1], adj_thresh, 
+                                        mask=state_mask, 
+                                        eef_mask=eef_mask,
+                                        no_self_edge=True)
+    Rr = Rr.detach()
+    Rs = Rs.detach()
+    return Rr, Rs
 
 def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=None):
     set_seed(args.random_seed)
@@ -51,13 +49,18 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
 
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.join(out_dir, 'checkpoints'), exist_ok=True)
+    prep_save_dir = os.path.join(out_dir, 'preprocess')
+    os.makedirs(prep_save_dir, exist_ok=True)
     phases = ['train', 'valid']
     if ratios is None:
         ratios = {"train": [0, 1], "valid": [0, 1]}
     batch_size = 64
     n_epoch = 2000
     log_interval = 5
-    datasets = {phase: RandomRigidDynDataset(args, data_dirs, ratios, phase, dense) for phase in phases}
+    dist_thresh = 0.02
+    n_future = 3
+    datasets = {phase: MultistepRigidDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
+                fixed_idx=False, dist_thresh=dist_thresh, n_future=n_future) for phase in phases}
 
     dataloaders = {phase: DataLoader(
         datasets[phase],
@@ -74,21 +77,58 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
             with grad_manager(phase):
                 if phase == 'train': model.train()
                 else: model.eval()
-                loss_sum = 0
                 if phase == 'valid':
                     loss_sum_list = []
                 for i, data in enumerate(dataloaders[phase]):
-                    data = truncate_graph(data)
                     if phase == 'train':
                         optimizer.zero_grad()
                     data = {key: data[key].to(device) for key in data.keys()}
-                    pred_state, pred_motion = model(**data)
+                    loss_sum = 0
 
-                    gt_state = data['state_next']
-                    obj_mask = data['obj_mask']
-                    pred_state_p = pred_state[:, :gt_state.shape[1], :3]
-                    loss = [func(pred_state_p[obj_mask], gt_state[obj_mask]) for func in loss_funcs]
-                    loss_sum = sum(loss)
+                    future_state = data['state_future']  # (B, n_future, n_p, 3)
+                    future_mask = data['state_future_mask']  # (B, n_future)
+                    future_eef = data['eef_future']  # (B, n_future, n_p+n_s, 3)
+                    future_action = data['action_future']  # (B, n_future, n_p+n_s, 3)
+                    assert torch.sum(future_action[:, 0] - data['action']) < 1e-6
+
+                    for fi in range(n_future):
+                        gt_state = future_state[:, fi].clone()  # (B, n_p, 3)
+                        gt_mask = future_mask[:, fi].clone()  # (B,)
+                        gt_mask = gt_mask[:, None, None].repeat(1, gt_state.shape[1], 3)  # (B, n_p, 3)
+
+                        data['Rr'], data['Rs'] = construct_relations(data['state'], 
+                                                                    data['state_mask'], data['eef_mask'], 
+                                                                    adj_thresh_range=[0.1, 0.2])
+
+                        pred_state, pred_motion = model(**data)
+
+                        pred_state_p = pred_state[:, :gt_state.shape[1], :3].clone()
+                        loss = [func(pred_state_p[gt_mask], gt_state[gt_mask]) for func in loss_funcs]
+
+                        loss_sum += sum(loss)
+
+                        if fi < n_future - 1:
+                            # build next graph
+                            next_eef = future_eef[:, fi+1].clone()  # (B, n_p+n_s, 3)
+                            next_action = future_action[:, fi+1].clone()  # (B, n_p+n_s, 3)
+                            next_state = next_eef.unsqueeze(1)  # (B, 1, n_p+n_s, 3)
+                            next_state[:, -1, :pred_state_p.shape[1]] = pred_state_p  # TODO n_his > 1
+                            next_graph = {
+                                # input information
+                                "state": next_state,  # (B, n_his, N+M, state_dim)
+                                "action": next_action,  # (B, N+M, state_dim) 
+                                
+                                # attr information
+                                "attrs": data["attrs"],  # (B, N+M, attr_dim)
+                                "p_rigid": data["p_rigid"],  # (B, n_instance,)
+                                "p_instance": data["p_instance"],  # (B, N, n_instance)
+                                "physics_param": data["physics_param"],  # (B, N,)
+                                "state_mask": data["state_mask"],  # (B, N+M,)
+                                "eef_mask": data["eef_mask"],  # (B, N+M,)
+                                "obj_mask": data["obj_mask"],  # (B, N,)
+                            }
+                            data = next_graph
+
                     if phase == 'train':
                         loss_sum.backward()
                         optimizer.step()
@@ -190,8 +230,8 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rigid_debug_1"
-    dense = False
+    out_dir = "../log/rigid_dense_debug_1"
+    dense = True
     train_data_dirs = {
         "train": [
             "../data/2023-08-30-03-04-49-509758",
@@ -218,7 +258,7 @@ if __name__ == "__main__":
             "../data/2023-09-04-18-42-27-707743",
         ],
     }
-    # train_rigid(args, out_dir, train_data_dirs, dense)
+    train_rigid(args, out_dir, train_data_dirs, dense)
 
     # test_data_dirs = {
     #     "test": [
@@ -230,4 +270,4 @@ if __name__ == "__main__":
     # test_data_dirs = "../data/2023-09-04-18-42-27-707743"  # not in training set
     # test_data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
     checkpoint = "model_2000.pth"
-    test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)
+    # test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)

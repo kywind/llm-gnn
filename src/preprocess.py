@@ -735,6 +735,181 @@ def extract_pushes_2(args, data_dir):  # save obj and eef keypoints, obj keypoin
     np.savetxt(os.path.join(data_dir, 'push_t_list_2_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
 
 
+def extract_pushes_train(args, data_dir, save_dir, dist_thresh=0.02):  # save obj and eef keypoints, obj keypoints containing both start and end points
+    verbose = False
+    # create output dir
+    eef_kypts_dir = os.path.join(save_dir, 'eef_kypts') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
+    os.makedirs(eef_kypts_dir, exist_ok=True)
+    obj_kypts_dir = os.path.join(save_dir, 'obj_kypts') # list of (ptcl_num, 3) for each push, indexed by push_num (dense)
+    os.makedirs(obj_kypts_dir, exist_ok=True)
+    dense_eef_kypts_dir = os.path.join(save_dir, 'dense_eef_kypts')
+    os.makedirs(dense_eef_kypts_dir, exist_ok=True)
+    dense_obj_kypts_dir = os.path.join(save_dir, 'dense_obj_kypts')
+    os.makedirs(dense_obj_kypts_dir, exist_ok=True)
+    
+    # input dir
+    database_obj_kypts_dir = os.path.join(data_dir, 'obj_kypts_orig')
+
+    # extract push info
+    push_num = len(os.listdir(os.path.join(data_dir, 'push')))
+    push_pts = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_pts.npy')) for i in range(push_num)]
+    push_time = [np.load(os.path.join(data_dir, 'push', f'{i}', 'push_time.npy')) for i in range(push_num)]
+    push_pts = np.stack(push_pts, axis=0) # (push_num, 2, 3)
+    push_time = np.stack(push_time, axis=0) # (push_num, 2)
+
+    total_time = len(glob.glob(os.path.join(data_dir, 'camera_0/color/color_*.png')))
+    image_times = list(range(total_time))
+    timestamps = np.loadtxt(os.path.join(data_dir, 'timestamp.txt')) 
+    record_idx = 0
+
+    # extract finger info
+    base_pose_in_tag = np.load(os.path.join(data_dir, "base_pose_in_tag.npy"))
+    finger_points_in_finger_frame = np.array([[0.01,  -0.025, 0.014], # bottom right
+                                              [-0.01, -0.025, 0.014], # bottom left
+                                              [-0.01, -0.025, 0.051], # top left
+                                              [0.01,  -0.025, 0.051]]) # top right
+
+    last_mode = 'idle'
+    curr_mode = 'idle'
+    start_push_pt = np.zeros(3)
+    last_push_pt = np.zeros(3)
+    curr_push_pt = np.zeros(3)
+    start_obj_pt = None
+    last_obj_pt = None
+    curr_obj_pt = None
+    push_idx = 0
+    t_list_dense = []
+    t_list = []
+    offset = None
+    for t in image_times:
+        is_start = False
+        is_end = False
+        # detect whether in push
+        for p_idx, pt in enumerate(push_time):
+            if timestamps[t] >= pt[0] and timestamps[t] < pt[1]:
+                curr_mode = 'push'
+                try:
+                    assert push_idx == p_idx
+                except:
+                    print(f"no frames recorded in directory {data_dir}, push {push_idx - 1}")
+                # for sparse
+                if timestamps[t - 1] < pt[0]:
+                    is_start = True
+                    t_last = t
+                elif timestamps[t + 1] >= pt[1]:
+                    is_end = True
+                    t_curr = t
+                    t_list.append([t_last, t_curr])
+                    t_last, t_curr = None, None
+                break
+        else:
+            curr_mode = 'idle'
+        
+        if curr_mode == 'push' and last_mode == 'idle':
+            assert is_start
+            # initialize obj keypoints for each push
+            if verbose: print(f'starting push at time {t}')
+            # NOTE new obj_kypts loading method
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                start_obj_pt = pkl.load(f)
+                last_obj_pt = start_obj_pt  # if record_idx is not zero, last_obj_pt should be roughly the same as start_obj_pt
+                if verbose: print(f'starting obj pt set at time {t}')
+            # initialize eef keypoints for each push
+            last_push_pt = push_pts[push_idx, 0]
+            start_push_pt = push_pts[push_idx, 0]
+            if verbose: print(f'starting eef pt set at time {t}')
+            offset = None
+            t_last_dense = t
+        
+        # extract finger points
+        left_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'left_finger', f'{t}.txt'))
+        right_finger_in_base_frame = np.loadtxt(os.path.join(data_dir, 'pose', 'right_finger', f'{t}.txt'))
+
+        left_finger_in_tag_frame = base_pose_in_tag @ left_finger_in_base_frame
+        right_finger_in_tag_frame = base_pose_in_tag @ right_finger_in_base_frame
+
+        N = finger_points_in_finger_frame.shape[0]
+        finger_points_in_finger_frame_homo = np.concatenate([finger_points_in_finger_frame, np.ones((N, 1))], axis=1) # (N, 4)
+        
+        left_finger_points = left_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+        right_finger_points = right_finger_in_tag_frame @ finger_points_in_finger_frame_homo.T # (4, N)
+
+        left_finger_points = left_finger_points.T # (N, 4)
+        right_finger_points = right_finger_points.T # (N, 4)
+        
+        curr_push_pt = np.concatenate([left_finger_points[:, :3], right_finger_points[:, :3]], axis=0).mean(axis=0) # [3]  # ocurrent push location
+        
+        # calculate calibration offset between finger points and pushes
+        if curr_mode == 'push' and last_mode == 'idle':
+            assert np.linalg.norm(curr_push_pt - last_push_pt) < 0.02
+            offset = last_push_pt - curr_push_pt
+        
+        # fix current push with the offset
+        if (curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
+            assert offset is not None
+            curr_push_pt += offset
+
+        ## dense
+        # save points in push
+        if (np.linalg.norm(curr_push_pt - last_push_pt) >= dist_thresh and curr_mode == 'push') or (curr_mode == 'idle' and last_mode == 'push'):
+            # store obj kypts at current state to next record_idx
+            # os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(dense_obj_kypts_dir, f"{(record_idx + 1):06}.pkl")}')
+            
+            # NOTE new obj_kypts saving method
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                curr_obj_pt = pkl.load(f)
+            obj_pts = [last_obj_pt, curr_obj_pt]
+            with open(os.path.join(dense_obj_kypts_dir, f"{record_idx:06}.pkl"), 'wb') as f:
+                pkl.dump(obj_pts, f)
+            
+            # print('loading obj keypoints for push', record_idx + 1)
+            # store the push between last state and current state to current record_idx
+            curr_push = np.concatenate([last_push_pt, curr_push_pt]) # [6]  # start and end for one timestep
+            t_curr_dense = t
+            t_list_dense.append([t_last_dense, t_curr_dense])
+
+            eef_pts = push_to_eef_pts(curr_push) # (2, eef_ptcl_num, 3)
+            np.save(os.path.join(dense_eef_kypts_dir, f'{record_idx:06}.npy'), eef_pts)
+            record_idx += 1
+            last_push_pt = curr_push_pt.copy()
+            last_obj_pt = copy.deepcopy(curr_obj_pt)
+
+            t_last_dense = t_curr_dense
+        
+        ## sparse (does not use curr_push)
+        # if (is_start and push_idx == 0):  # only satisfy once
+        #     os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(obj_kypts_dir, f"{push_idx:06}.pkl")}')
+        # elif is_end:  # once per push
+        #     os.system(f'cp {os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")} {os.path.join(obj_kypts_dir, f"{(push_idx+1):06}.pkl")}')
+        
+        # NOTE new obj_kypts saving method
+        if is_end:  # once per push
+            with open(os.path.join(os.path.join(database_obj_kypts_dir, f"{t:06}.pkl")), 'rb') as f:
+                curr_obj_pt = pkl.load(f)
+            obj_pts = [start_obj_pt, curr_obj_pt]
+            if verbose: print(f'ending obj pt set at time {t}')
+            with open(os.path.join(obj_kypts_dir, f"{push_idx:06}.pkl"), 'wb') as f:
+                pkl.dump(obj_pts, f)
+            if verbose: print(f'saving obj pt pairs to push idx {push_idx}')
+
+        if is_end:  # once per push
+            # push_pts[push_idx] should be storing the same points as curr_push_pt?
+            assert np.linalg.norm(start_push_pt - push_pts[push_idx, 0]) < 0.01
+            assert np.linalg.norm(curr_push_pt - push_pts[push_idx, 1]) < 0.01
+            if verbose: print(f'ending eef pt set at time {t}')
+            eef_pts = push_to_eef_pts(push_pts[push_idx].reshape(-1)) # (2, eef_ptcl_num, 3)
+            np.save(os.path.join(eef_kypts_dir, f'{push_idx:06}.npy'), eef_pts)
+            if verbose: print(f'saving eef pt pairs to push idx {push_idx}')
+
+        # update push index
+        if curr_mode == 'idle' and last_mode == 'push':
+            push_idx += 1
+        last_mode = curr_mode
+
+    np.savetxt(os.path.join(save_dir, 'push_t_list.txt'), np.array(t_list).astype(np.int32), fmt='%i')
+    np.savetxt(os.path.join(save_dir, 'push_t_list_dense.txt'), np.array(t_list_dense).astype(np.int32), fmt='%i')
+
+
 def kypts_verification(args, data_dir):  # ensure dense/sparse obj/eef kypts derived by extract_pushes_2 are continuous in time
     eef_subdirs = ['eef_kypts_2', 'dense_eef_kypts_2']
     obj_subdirs = ['obj_kypts_2', 'dense_obj_kypts_2']
