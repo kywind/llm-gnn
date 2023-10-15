@@ -389,16 +389,16 @@ def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
 
 if __name__ == "__main__":
     args = gen_args()
-    start_idx = 5
-    rollout_steps = 10
+    start_idx = 0
+    rollout_steps = 100
     data_dir = "../data/2023-08-23-12-08-12-201998"
-    checkpoint = "../log/rigid_debug_1/checkpoints/model_2000.pth"
-    dense = False
+    checkpoint = "../log/rigid_dense_debug_1/checkpoints/model_1000.pth"
+    dense = True
     rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense)
 
     for cam in range(4):
         img_path = f"vis/rollout-vis-{data_dir.split('/')[-1]}-dense/camera_{cam}" if dense else f"vis/rollout-vis-{data_dir.split('/')[-1]}/camera_{cam}"
-        frame_rate = 1
+        frame_rate = 5
         height = 360
         width = 640
         pred_out_path = os.path.join(img_path, "pred.mp4")

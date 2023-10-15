@@ -21,6 +21,7 @@ import cv2
 import glob
 from PIL import Image
 import pickle as pkl
+import matplotlib.pyplot as plt
 
 
 def grad_manager(phase):
@@ -28,6 +29,18 @@ def grad_manager(phase):
         return torch.enable_grad()
     else:
         return torch.no_grad()
+
+def truncate_graph(data):
+    Rr = data['Rr']
+    Rs = data['Rs']
+    Rr_nonzero = torch.sum(Rr, dim=-1) > 0
+    Rs_nonzero = torch.sum(Rs, dim=-1) > 0
+    n_Rr = torch.max(Rr_nonzero.sum(1), dim=0)[0].item()
+    n_Rs = torch.max(Rs_nonzero.sum(1), dim=0)[0].item()
+    max_n = max(n_Rr, n_Rs)
+    data['Rr'] = data['Rr'][:, :max_n, :]
+    data['Rs'] = data['Rs'][:, :max_n, :]
+    return data
 
 def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2], max_nR=500):
     # construct relations (density as hyperparameter)
@@ -55,7 +68,7 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
     if ratios is None:
         ratios = {"train": [0, 1], "valid": [0, 1]}
     batch_size = 64
-    n_epoch = 2000
+    n_epoch = 500
     log_interval = 5
     dist_thresh = 0.02
     n_future = 3
@@ -72,13 +85,14 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
     model, loss_funcs = gen_model(args, material_dict=None, material=material, verbose=True, debug=False)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    loss_plot_list_train = []
+    loss_plot_list_valid = []
     for epoch in range(n_epoch):
         for phase in phases:
             with grad_manager(phase):
                 if phase == 'train': model.train()
                 else: model.eval()
-                if phase == 'valid':
-                    loss_sum_list = []
+                loss_sum_list = []
                 for i, data in enumerate(dataloaders[phase]):
                     if phase == 'train':
                         optimizer.zero_grad()
@@ -134,13 +148,32 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
                         optimizer.step()
                         if i % log_interval == 0:
                             print(f'Epoch {epoch}, iter {i}, loss {loss_sum.item()}')
+                            loss_sum_list.append(loss_sum.item())
                     if phase == 'valid':
                         loss_sum_list.append(loss_sum.item())
                 if phase == 'valid':
                     print(f'\nEpoch {epoch}, valid loss {np.mean(loss_sum_list)}\n')
 
+                if phase == 'train':
+                    loss_plot_list_train.append(np.mean(loss_sum_list))
+                if phase == 'valid':
+                    loss_plot_list_valid.append(np.mean(loss_sum_list))
+                
         if ((epoch + 1) < 100 and (epoch + 1) % 10 == 0) or (epoch + 1) % 100 == 0:
             torch.save(model.state_dict(), os.path.join(out_dir, 'checkpoints', f'model_{(epoch + 1)}.pth'))
+    
+            # save figures
+            plt.figure(figsize=(20, 5))
+            plt.plot(loss_plot_list_train, label='train')
+            plt.plot(loss_plot_list_valid, label='valid')
+            # ax = plt.gca()
+            # y_min = min(min(loss_plot_list_train), min(loss_plot_list_valid))
+            # y_min = min(loss_plot_list_valid)
+            # y_max = min(5 * y_min, max(max(loss_plot_list_train), max(loss_plot_list_valid)))
+            # ax.set_ylim([0, y_max])
+            plt.legend()
+            plt.savefig(os.path.join(out_dir, 'loss.png'), dpi=300)
+            plt.close()
 
 
 def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid', ratios=None):
@@ -230,7 +263,8 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rigid_dense_debug_1"
+    # out_dir = "../log/rigid_dense_debug_1"
+    out_dir = "../log/rigid_dense_debug_2"  # pstep = 6
     dense = True
     train_data_dirs = {
         "train": [
