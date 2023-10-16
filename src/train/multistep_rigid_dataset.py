@@ -360,6 +360,20 @@ class MultistepRigidDynDataset(Dataset):
         # history state
         states = states[None]  # n_his = 1  # TODO make this code compatible with n_his > 1
 
+        # add randomness
+        # state randomness
+        states += np.random.uniform(-0.005, 0.005, size=states.shape)  # TODO tune noise level
+        # rotation randomness (already translation-invariant)
+        random_rot = np.random.uniform(-np.pi, np.pi)
+        rot_mat = np.array([[np.cos(random_rot), -np.sin(random_rot), 0],
+                            [np.sin(random_rot), np.cos(random_rot), 0],
+                            [0, 0, 1]], dtype=states.dtype)  # 2D rotation matrix in xy plane
+        states = states @ rot_mat[None]
+        states_delta = states_delta @ rot_mat
+        eef_future = eef_future @ rot_mat[None]
+        states_delta_future = states_delta_future @ rot_mat[None]
+        obj_kp_futures = obj_kp_futures @ rot_mat[None]
+
         # save graph
         graph = {
             # input information

@@ -76,7 +76,7 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
     if ratios is None:
         ratios = {"train": [0, 1], "valid": [0, 1]}
     batch_size = 64
-    n_epoch = 500
+    n_epoch = 1000
     log_interval = 5
     dist_thresh = 0.02
     n_future = 3
@@ -294,7 +294,9 @@ if __name__ == "__main__":
 
     # out_dir = "../log/rigid_dense_debug_1"
     # out_dir = "../log/rigid_dense_debug_2"  # pstep = 6
-    out_dir = "../log/rigid_dense_debug_3"  # pstep = 6, output is 3 dim
+    # out_dir = "../log/rigid_dense_debug_3"  # pstep = 6, output is 3 dim
+    # out_dir = "../log/rigid_dense_debug_4"  # pstep = 6, add randomness
+    out_dir = "../log/rigid_dense_debug_5"  # pstep = 6, output is 3 dim, add randomness
     dense = True
     train_data_dirs = {
         "train": [

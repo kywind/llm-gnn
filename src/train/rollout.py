@@ -7,7 +7,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import gen_args
 from gnn.model_wrapper import gen_model
-from gnn.utils import set_seed
+from gnn.utils import set_seed, umeyama_algorithm
 
 import open3d as o3d
 
@@ -21,7 +21,7 @@ from train.train_rigid import truncate_graph
 from data.utils import label_colormap
 
 
-def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense):
+def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, rigid_transform=False):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -247,7 +247,43 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
             gt_state = graph['state_next'].detach().cpu().numpy()
             gt_state_list.append(graph)
             pred_state, pred_motion = model(**graph)
+            pred_state_p = pred_state[:, :gt_state.shape[1], :3].clone()
             pred_state = pred_state.detach().cpu().numpy()
+
+            # post process pred state using rigid constraints
+            if rigid_transform:
+                p_instance = graph['p_instance']  # B, n_p, n_ins
+                # p_rigid = graph['p_rigid']  # B, n_ins  # assume all are rigid objects
+                # p_rigid_per_particle = torch.sum(p_instance * p_rigid[:, None, :], 2, keepdim=True)  # B, n_p, 1
+
+                pred_state_p_valid = pred_state_p  # B', n_p, 3 (B' = B)
+                p_instance_valid = p_instance  # B', n_p, n_ins
+                
+                instance_pred_state_p = p_instance_valid.transpose(1, 2)[..., None] * pred_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                rigid_instance_pred_state_p = instance_pred_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                rigid_instance_mask = p_instance_valid.transpose(1, 2)[p_instance_valid.sum(1) > 0].bool()  # n_rigid, n_p
+
+                # don't use gt state, use input state instead
+                input_state_p = graph['state'][:, -1, :gt_state.shape[1]]  # B, n_p, 3
+                input_state_p_valid = input_state_p  # B', n_p, 3
+                instance_input_state_p = p_instance_valid.transpose(1, 2)[..., None] * input_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                rigid_instance_input_state_p = instance_input_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                
+                _, R_pred, t_pred = umeyama_algorithm(rigid_instance_input_state_p, rigid_instance_pred_state_p, rigid_instance_mask, fixed_scale=True)
+                
+                # transform back to particle positions
+                # R_pred: n_rigid, 3, 3
+                # t_pred: n_rigid, 3
+                # rigid_instance_input_state_p: n_rigid, n_p, 3
+                rigid_instance_final_state_p = rigid_instance_input_state_p.bmm(R_pred.transpose(1, 2)) + t_pred  # n_rigid, n_p, 3
+                # assume batch size is 1
+                final_state_p = torch.zeros_like(input_state_p_valid)  # B', n_p, 3
+                for ri in range(rigid_instance_final_state_p.shape[0]):
+                    p_instance_i = p_instance_valid[0, :, ri]  # n_ins,
+                    final_state_p[0][p_instance_i > 0] = rigid_instance_final_state_p[ri][p_instance_i > 0]  # n_p, 3
+
+                pred_state[:, :gt_state.shape[1], :3] = final_state_p.detach().cpu().numpy()
+
             pred_state_list.append(pred_state)
 
             # next step input
@@ -427,17 +463,19 @@ if __name__ == "__main__":
     args = gen_args()
     start_idx = 0
     rollout_steps = 100
-    data_dir = "../data/2023-08-23-12-08-12-201998"
-    checkpoint_dir_name = "rigid_dense_debug_1"
-    checkpoint_epoch = 500
+    # data_dir = "../data/2023-08-23-12-08-12-201998"
+    data_dir = "../data/2023-09-04-18-42-27-707743"
+    checkpoint_dir_name = "rigid_dense_debug_5"
+    checkpoint_epoch = 800
     checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
+    rigid_transform = True
     dense = True
     dense_str = "dense" if dense else ""
 
     save_dir = f"vis/rollout-vis-{checkpoint_dir_name}-model_{checkpoint_epoch}-{data_dir.split('/')[-1]}-{dense_str}"
     os.makedirs(save_dir, exist_ok=True)
 
-    rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense)
+    rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, rigid_transform)
 
     for cam in range(4):
         img_path = os.path.join(save_dir, f"camera_{cam}")

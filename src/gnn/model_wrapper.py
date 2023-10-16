@@ -96,14 +96,14 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
             "predict_rigid": False,
             "predict_non_rigid": True,
             "rigid_out_dim": 0,
-            "non_rigid_out_dim": args.state_dim,
+            "non_rigid_out_dim": 3,
         })
     elif args.material in ['deformable']:
         kwargs.update({
             "predict_rigid": True,
             "predict_non_rigid": True,
             "rigid_out_dim": 7,
-            "non_rigid_out_dim": args.state_dim,
+            "non_rigid_out_dim": 3,
         })
     else:
         pass
