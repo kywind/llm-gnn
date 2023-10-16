@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import gen_args
 from gnn.model_wrapper import gen_model
-from gnn.utils import set_seed
+from gnn.utils import set_seed, umeyama_algorithm
 
 from train.random_rigid_dataset import RandomRigidDynDataset
 from train.multistep_rigid_dataset import MultistepRigidDynDataset, construct_edges_from_states
@@ -23,6 +23,13 @@ from PIL import Image
 import pickle as pkl
 import matplotlib.pyplot as plt
 
+
+def rigid_loss(orig_pos, pred_pos, obj_mask):
+    _, R_pred, t_pred = umeyama_algorithm(orig_pos, pred_pos, obj_mask, fixed_scale=True)
+    pred_pos_ume = orig_pos.bmm(R_pred.transpose(1, 2)) + t_pred
+    pred_pos_ume = pred_pos_ume.detach()
+    loss = F.mse_loss(pred_pos[obj_mask], pred_pos_ume[obj_mask])
+    return loss
 
 def grad_manager(phase):
     if phase == 'train':
@@ -56,6 +63,7 @@ def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2
     return Rr, Rs
 
 def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=None):
+    torch.autograd.set_detect_anomaly(True)
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -108,7 +116,7 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
                     for fi in range(n_future):
                         gt_state = future_state[:, fi].clone()  # (B, n_p, 3)
                         gt_mask = future_mask[:, fi].clone()  # (B,)
-                        gt_mask = gt_mask[:, None, None].repeat(1, gt_state.shape[1], 3)  # (B, n_p, 3)
+                        # gt_mask = gt_mask[:, None, None].repeat(1, gt_state.shape[1], 3)  # (B, n_p, 3)
 
                         data['Rr'], data['Rs'] = construct_relations(data['state'], 
                                                                     data['state_mask'], data['eef_mask'], 
@@ -118,6 +126,27 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
 
                         pred_state_p = pred_state[:, :gt_state.shape[1], :3].clone()
                         loss = [func(pred_state_p[gt_mask], gt_state[gt_mask]) for func in loss_funcs]
+                        
+                        if args.use_rigid_loss:
+                            p_instance = data['p_instance']  # B, n_p, n_ins
+                            # p_rigid = data['p_rigid']  # B, n_ins  # assume all are rigid objects
+                            # p_rigid_per_particle = torch.sum(p_instance * p_rigid[:, None, :], 2, keepdim=True)  # B, n_p, 1
+
+                            pred_state_p_valid = pred_state_p[gt_mask]  # B', n_p, 3
+                            p_instance_valid = p_instance[gt_mask]  # B', n_p, n_ins
+                            
+                            instance_pred_state_p = p_instance_valid.transpose(1, 2)[..., None] * pred_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                            rigid_instance_pred_state_p = instance_pred_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                            rigid_instance_mask = p_instance_valid.transpose(1, 2)[p_instance_valid.sum(1) > 0].bool()  # n_rigid, n_p
+
+                            # don't use gt state, use input state instead
+                            input_state_p = data['state'][:, -1, :gt_state.shape[1]]  # B, n_p, 3
+                            input_state_p_valid = input_state_p[gt_mask]  # B', n_p, 3
+                            instance_input_state_p = p_instance_valid.transpose(1, 2)[..., None] * input_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                            rigid_instance_input_state_p = instance_input_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                            
+                            # calculate rigid loss
+                            loss.append(rigid_loss(rigid_instance_input_state_p, rigid_instance_pred_state_p, rigid_instance_mask))
 
                         loss_sum += sum(loss)
 
@@ -264,7 +293,8 @@ if __name__ == "__main__":
     args = gen_args()
 
     # out_dir = "../log/rigid_dense_debug_1"
-    out_dir = "../log/rigid_dense_debug_2"  # pstep = 6
+    # out_dir = "../log/rigid_dense_debug_2"  # pstep = 6
+    out_dir = "../log/rigid_dense_debug_3"  # pstep = 6, output is 3 dim
     dense = True
     train_data_dirs = {
         "train": [

@@ -37,7 +37,7 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         args.state_dim = 0  # x, y, z (no absolute position)
         args.offset_dim = 3  # offset does not contain absolute position
         args.action_dim = 3
-        args.pstep = 3
+        args.pstep = 6
         args.time_step = 1
         args.dt = 1. / 60.
         args.sequence_length = 4
@@ -87,9 +87,10 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         kwargs.update({
             "predict_rigid": True,
             "predict_non_rigid": False,
-            "rigid_out_dim": 7,
+            "rigid_out_dim": 3,
             "non_rigid_out_dim": 0,
         })
+        args.use_rigid_loss = True  # only use rigid loss when rigid_out_dim == 3
     elif args.material in ['granular', 'rope', 'cloth']:
         kwargs.update({
             "predict_rigid": False,

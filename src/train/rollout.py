@@ -21,13 +21,10 @@ from train.train_rigid import truncate_graph
 from data.utils import label_colormap
 
 
-def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
+def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
-
-    save_dir = f"vis/rollout-vis-{data_dir.split('/')[-1]}-dense" if dense else f"vis/rollout-vis-{data_dir.split('/')[-1]}"
-    os.makedirs(save_dir, exist_ok=True)
 
     obj_kypts_paths = []
     eef_kypts_paths = []
@@ -204,11 +201,27 @@ def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
         obj_kp_proj[:, 0] = obj_kp_homo[:, 0] * fx / obj_kp_homo[:, 2] + cx
         obj_kp_proj[:, 1] = obj_kp_homo[:, 1] * fy / obj_kp_homo[:, 2] + cy
 
+        # also transform eef keypoints
+        eef_kp_start = eef_kp[0]
+        eef_kp_homo = np.concatenate([eef_kp_start, np.ones((eef_kp_start.shape[0], 1))], axis=1) # (N, 4)
+        eef_kp_homo = eef_kp_homo @ extr.T  # (N, 4)
+
+        # also project eef keypoints
+        fx, fy, cx, cy = intr
+        eef_kp_proj = np.zeros((eef_kp_homo.shape[0], 2))
+        eef_kp_proj[:, 0] = eef_kp_homo[:, 0] * fx / eef_kp_homo[:, 2] + cx
+        eef_kp_proj[:, 1] = eef_kp_homo[:, 1] * fy / eef_kp_homo[:, 2] + cy
+
         # visualize
         for k in range(obj_kp_proj.shape[0]):
             cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), 3, 
                 (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
-        
+
+        # also visualize eef in red
+        for k in range(eef_kp_proj.shape[0]):
+            cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
+                (0, 0, 255), -1)
+
         pred_kp_proj_last.append(obj_kp_proj)
         gt_kp_proj_last.append(obj_kp_proj)
         
@@ -241,6 +254,9 @@ def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
             obj_kp = pred_state[0][obj_mask]
             gt_kp = gt_state[0][obj_mask]
 
+            # eef keypoint
+            eef_kp = np.load(eef_kypts_paths[i]).astype(np.float32)[0]   # (8, 3)
+
             push_i = t_list[i, 0]
 
             pred_kp_proj_list = []
@@ -265,10 +281,25 @@ def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
 
                 pred_kp_proj_list.append(obj_kp_proj)
 
+                # also transform eef keypoints
+                eef_kp_homo = np.concatenate([eef_kp, np.ones((eef_kp.shape[0], 1))], axis=1) # (N, 4)
+                eef_kp_homo = eef_kp_homo @ extr.T  # (N, 4)
+
+                # also project eef keypoints
+                fx, fy, cx, cy = intr
+                eef_kp_proj = np.zeros((eef_kp_homo.shape[0], 2))
+                eef_kp_proj[:, 0] = eef_kp_homo[:, 0] * fx / eef_kp_homo[:, 2] + cx
+                eef_kp_proj[:, 1] = eef_kp_homo[:, 1] * fy / eef_kp_homo[:, 2] + cy
+
                 # visualize
                 for k in range(obj_kp_proj.shape[0]):
                     cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), 3, 
                         (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
+
+                # also visualize eef in red
+                for k in range(eef_kp_proj.shape[0]):
+                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
+                        (0, 0, 255), -1)
 
                 pred_kp_last = pred_kp_proj_last[cam]
                 for k in range(obj_kp_proj.shape[0]):
@@ -300,6 +331,11 @@ def rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense):
                 for k in range(gt_kp_proj.shape[0]):
                     gt_lineset[cam].append([int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1]), int(gt_kp_last[k, 0]), int(gt_kp_last[k, 1]), 
                                        int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
+
+                # also visualize eef in red
+                for k in range(eef_kp_proj.shape[0]):
+                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
+                        (0, 0, 255), -1)
 
                 for k in range(len(gt_lineset[cam])):
                     ln = gt_lineset[cam][k]
@@ -392,12 +428,19 @@ if __name__ == "__main__":
     start_idx = 0
     rollout_steps = 100
     data_dir = "../data/2023-08-23-12-08-12-201998"
-    checkpoint = "../log/rigid_dense_debug_1/checkpoints/model_1000.pth"
+    checkpoint_dir_name = "rigid_dense_debug_1"
+    checkpoint_epoch = 500
+    checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
     dense = True
-    rollout_rigid(args, data_dir, checkpoint, start_idx, rollout_steps, dense)
+    dense_str = "dense" if dense else ""
+
+    save_dir = f"vis/rollout-vis-{checkpoint_dir_name}-model_{checkpoint_epoch}-{data_dir.split('/')[-1]}-{dense_str}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense)
 
     for cam in range(4):
-        img_path = f"vis/rollout-vis-{data_dir.split('/')[-1]}-dense/camera_{cam}" if dense else f"vis/rollout-vis-{data_dir.split('/')[-1]}/camera_{cam}"
+        img_path = os.path.join(save_dir, f"camera_{cam}")
         frame_rate = 5
         height = 360
         width = 640

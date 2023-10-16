@@ -112,6 +112,8 @@ class DynamicsPredictor(nn.Module):
         # which I think is unnecessary since the density is already included in the particle encoder.
 
         # ParticlePredictor
+        self.non_rigid_out_dim = kwargs["non_rigid_out_dim"]
+        self.rigid_out_dim = kwargs["rigid_out_dim"]
         if kwargs["predict_non_rigid"]:
             self.non_rigid_predictor = ParticlePredictor(self.nf_effect, self.nf_effect, kwargs["non_rigid_out_dim"])
         else:
@@ -362,7 +364,8 @@ class DynamicsPredictor(nn.Module):
             non_rigid_motion = self.non_rigid_predictor(particle_effect[:, :n_p].contiguous())
 
         # rigid motion
-        if self.rigid_predictor is not None:
+        if self.rigid_predictor is not None and self.rigid_out_dim == 7:
+            # assert args.state_dim != 7
             # aggregate effects of particles in the same instance
             # instance effect: B x n_instance x nf_effect
             instance_effect = p_instance.transpose(1, 2).bmm(particle_effect[:, :n_p])
@@ -410,6 +413,11 @@ class DynamicsPredictor(nn.Module):
             if self.state_normalize:  # normalize
                 rigid_motion = (rigid_motion - mean_d) / std_d
         
+        if self.rigid_predictor is not None and self.rigid_out_dim == 3:
+            # assert args.state_dim == 3
+            # rigid_motion: B x n_p x state_dim
+            rigid_motion = self.rigid_predictor(particle_effect[:, :n_p].contiguous())
+
         # aggregate motions
         rigid_part = p_rigid_per_particle[..., 0].bool()
         non_rigid_part = ~rigid_part
@@ -420,8 +428,10 @@ class DynamicsPredictor(nn.Module):
         pred_motion = torch.zeros(B, n_p, state_dim).to(args.device)
         if self.non_rigid_predictor is not None:
             pred_motion[non_rigid_part] = non_rigid_motion[non_rigid_part]
-        if self.rigid_predictor is not None:
+        if self.rigid_predictor is not None and self.rigid_out_dim == 7:
             pred_motion[rigid_part] = torch.sum(p_instance.transpose(1, 2)[..., None] * rigid_motion, 1)[rigid_part]
+        if self.rigid_predictor is not None and self.rigid_out_dim == 3:
+            pred_motion[rigid_part] = rigid_motion[rigid_part]
         if self.state_normalize:  # denormalize
             pred_motion = pred_motion * std_d + mean_d
         pred_pos = state[:, -1, :n_p] + torch.clamp(pred_motion, max=self.motion_clamp, min=-self.motion_clamp)
@@ -430,6 +440,15 @@ class DynamicsPredictor(nn.Module):
 
         # pred_pos (denormalized): B x n_p x state_dim
         # pred_motion (denormalized): B x n_p x state_dim
+
+        # debug
+        # orig_pos = state[:, -1, :n_p]
+        # obj_mask = torch.zeros_like(orig_pos[:, :, 0]).bool()
+        # obj_mask[:, :20] = True
+        # _, R_pred, t_pred = umeyama_algorithm(orig_pos, pred_pos, obj_mask, fixed_scale=True)
+        # pred_pos_ume = orig_pos.bmm(R_pred.transpose(1, 2)) + t_pred
+        # assert torch.allclose(pred_pos[:, :20], pred_pos_ume[:, :20], atol=1e-5), f"umeyama algorithm failed, max diff: {torch.max(torch.abs(pred_pos[:, :20] - pred_pos_ume[:, :20]))}"
+
         return pred_pos, pred_motion
 
 
