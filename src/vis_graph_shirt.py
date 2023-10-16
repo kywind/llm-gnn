@@ -71,6 +71,7 @@ for i in range(len(obj_kypts_paths)):
     # ptcl_per_instance = obj_kp[0].shape[0]
     # obj_kp = np.concatenate(obj_kp, axis=0) # (N = instance_num * rand_ptcl_num, 3)
     obj_kp_num = obj_kp.shape[0]
+    eef_kp_num = eef_kp.shape[1]
 
     # # obj_kp_next = [obj_kp_next[j][fps_idx] for j, fps_idx in enumerate(fps_idx_list)]
     # obj_kp_next = [kp[:top_k] for kp in obj_kp_next]
@@ -86,7 +87,7 @@ for i in range(len(obj_kypts_paths)):
         intr = intr_list[cam]
         extr = extr_list[cam]
 
-        for j, kp in [(img_id, obj_kp), (img_id_next, obj_kp_next)]:
+        for idx, (j, kp) in enumerate([(img_id, obj_kp), (img_id_next, obj_kp_next)]):
             img_path = os.path.join(data_dir, f'camera_{cam+1}', f'episode_{episode_id}', f'{j}_color.png')
             img = cv2.imread(img_path)
 
@@ -106,6 +107,31 @@ for i in range(len(obj_kypts_paths)):
             for k in range(obj_kp_proj.shape[0]):
                 cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), 3, 
                     (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
+
+            if idx == 0:
+                # transform eef keypoints
+                kpe = eef_kp.reshape(-1, 3)
+                kpe[:, 2] *= -1
+                eef_kp_homo = np.concatenate([kpe, np.ones((kpe.shape[0], 1))], axis=1) # (N, 4)
+                eef_kp_homo = eef_kp_homo @ extr.T  # (N, 4)
+
+                eef_kp_homo[:, 1] *= -1
+                eef_kp_homo[:, 2] *= -1
+
+                # project keypoints
+                fx, fy, cx, cy = intr
+                eef_kp_proj = np.zeros((2 * eef_kp_num, 2))
+                eef_kp_proj[:, 0] = eef_kp_homo[:, 0] * fx / eef_kp_homo[:, 2] + cx
+                eef_kp_proj[:, 1] = eef_kp_homo[:, 1] * fy / eef_kp_homo[:, 2] + cy
+
+                eef_kp_proj = eef_kp_proj.reshape(2, eef_kp_num, 2)
+                for k in range(eef_kp_num):
+                    cv2.circle(img, (int(eef_kp_proj[0, k, 0]), int(eef_kp_proj[0, k, 1])), 3, 
+                        (0, 0, 255), -1)
+                    cv2.circle(img, (int(eef_kp_proj[1, k, 0]), int(eef_kp_proj[1, k, 1])), 3, 
+                        (0, 255, 0), -1)
+                    cv2.line(img, (int(eef_kp_proj[0, k, 0]), int(eef_kp_proj[0, k, 1])), (int(eef_kp_proj[1, k, 0]), int(eef_kp_proj[1, k, 1])), 
+                        (0, 0, 255), 1)
 
             print(os.path.join(save_dir_cam, f'{episode_id:03}_{j:03}.jpg'))
             cv2.imwrite(os.path.join(save_dir_cam, f'{episode_id:03}_{j:03}.jpg'), img)
