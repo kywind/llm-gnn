@@ -661,6 +661,14 @@ def np2o3d(pcd, color=None):
         pcd_o3d.colors = o3d.utility.Vector3dVector(color)
     return pcd_o3d
 
+def rgb_colormap(repeat=1):
+    base = np.asarray([
+        [0, 0, 255],
+        [0, 255, 0],
+        [255, 0, 0],
+    ])
+    return np.repeat(base, repeat, axis=0)
+
 def label_colormap():
     """Creates a label colormap used in CITYSCAPES segmentation benchmark.
     Returns:

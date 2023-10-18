@@ -10,6 +10,7 @@ from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed, umeyama_algorithm
 
 import open3d as o3d
+import matplotlib.pyplot as plt
 
 import cv2
 import glob
@@ -18,10 +19,10 @@ import pickle as pkl
 from dgl.geometry import farthest_point_sampler
 from train.random_rigid_dataset import construct_edges_from_states
 from train.train_rigid import truncate_graph
-from data.utils import label_colormap
+from data.utils import label_colormap, rgb_colormap
 
 
-def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, rigid_transform=False):
+def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, colormap, n_fps=None, rigid_transform=False):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -180,7 +181,34 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
     push_start = t_list[start_idx, 0]
     push_end = t_list[start_idx, 1]
 
-    colormap = label_colormap()
+    # fps sample keypoints for visualization
+    kp = states[0, :obj_kp_num]
+    p_instance_vis = graph['p_instance'][:obj_kp_num]  # (n_obj, n_ins)
+    obj_kp_fps_idx_all = []
+    for oi in range(p_instance_vis.shape[1]):
+        if np.all(p_instance_vis[:, oi] == 0):
+            continue
+        p_instance_vis_single_cum = np.zeros_like(p_instance_vis[:, oi])
+        cumsum = 1
+        for idx in range(p_instance_vis.shape[0]):
+            if p_instance_vis[idx, oi] > 0: 
+                p_instance_vis_single_cum[idx] = cumsum
+                cumsum += 1
+        p_instance_vis_single_cum = p_instance_vis_single_cum.astype(np.int32)
+        obj_kp_single = kp[p_instance_vis[:, oi] > 0]
+        # farthest point sampling
+        obj_kp_single_tensor = torch.from_numpy(obj_kp_single).float()[None, ...]
+        obj_kp_fps_idx_tensor = farthest_point_sampler(obj_kp_single_tensor, n_fps, start_idx=np.random.randint(0, obj_kp_single.shape[0]))[0]
+        obj_kp_fps_idx = obj_kp_fps_idx_tensor.numpy().astype(np.int32)
+        for idx in obj_kp_fps_idx:
+            obj_kp_fps_idx_all.append(np.where(p_instance_vis_single_cum == idx + 1)[0][0])
+    obj_kp_fps_idx_all = np.array(sorted(obj_kp_fps_idx_all))
+    kp_vis = kp[obj_kp_fps_idx_all]
+
+    point_size = 5
+    line_size = 2
+    line_alpha = 0.5
+
     pred_kp_proj_last = []
     gt_kp_proj_last = []
     for cam in range(4):
@@ -191,8 +219,7 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
         save_dir_cam = os.path.join(save_dir, f'camera_{cam}')
 
         # transform keypoints
-        kp = states[0, :obj_kp_num]
-        obj_kp_homo = np.concatenate([kp, np.ones((kp.shape[0], 1))], axis=1) # (N, 4)
+        obj_kp_homo = np.concatenate([kp_vis, np.ones((kp_vis.shape[0], 1))], axis=1) # (N, 4)
         obj_kp_homo = obj_kp_homo @ extr.T  # (N, 4)
 
         # project keypoints
@@ -214,13 +241,13 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
 
         # visualize
         for k in range(obj_kp_proj.shape[0]):
-            cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), 3, 
+            cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), point_size, 
                 (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
 
         # also visualize eef in red
-        for k in range(eef_kp_proj.shape[0]):
-            cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
-                (0, 0, 255), -1)
+        # for k in range(eef_kp_proj.shape[0]):
+        #     cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
+        #         (0, 0, 255), -1)
 
         pred_kp_proj_last.append(obj_kp_proj)
         gt_kp_proj_last.append(obj_kp_proj)
@@ -237,11 +264,20 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
     pred_state_list = []
     gt_lineset = [[], [], [], []]
     pred_lineset = [[], [], [], []]
+    error_list = []
     with torch.no_grad():
         for i in range(start_idx + 1, start_idx + 1 + rollout_steps):
-            # only show one step of lineset
-            gt_lineset = [[], [], [], []]
-            pred_lineset = [[], [], [], []]
+            # show t_line steps of lineset
+            t_line = 5
+            gt_lineset_new = [[], [], [], []]
+            pred_lineset_new = [[], [], [], []]
+            for lc in range(4):
+                for li in range(len(gt_lineset[lc])):
+                    if gt_lineset[lc][li][-1] >= i - t_line:
+                        gt_lineset_new[lc].append(gt_lineset[lc][li])
+                        pred_lineset_new[lc].append(pred_lineset[lc][li])
+            gt_lineset = gt_lineset_new
+            pred_lineset = pred_lineset_new
 
             graph = truncate_graph(graph)
             gt_state = graph['state_next'].detach().cpu().numpy()
@@ -290,6 +326,14 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
             obj_kp = pred_state[0][obj_mask]
             gt_kp = gt_state[0][obj_mask]
 
+            # fps for visualization
+            obj_kp_vis = obj_kp[obj_kp_fps_idx_all]
+            gt_kp_vis = gt_kp[obj_kp_fps_idx_all]
+
+            # calculate error
+            error = np.linalg.norm(gt_kp - obj_kp, axis=1).mean()
+            error_list.append(error)
+
             # eef keypoint
             eef_kp = np.load(eef_kypts_paths[i]).astype(np.float32)[0]   # (8, 3)
 
@@ -306,7 +350,7 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
                 save_dir_cam = os.path.join(save_dir, f'camera_{cam}')
 
                 # transform keypoints
-                obj_kp_homo = np.concatenate([obj_kp, np.ones((obj_kp.shape[0], 1))], axis=1) # (N, 4)
+                obj_kp_homo = np.concatenate([obj_kp_vis, np.ones((obj_kp_vis.shape[0], 1))], axis=1) # (N, 4)
                 obj_kp_homo = obj_kp_homo @ extr.T  # (N, 4)
 
                 # project keypoints
@@ -329,29 +373,31 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
 
                 # visualize
                 for k in range(obj_kp_proj.shape[0]):
-                    cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), 3, 
+                    cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), point_size, 
                         (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
 
                 # also visualize eef in red
-                for k in range(eef_kp_proj.shape[0]):
-                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
-                        (0, 0, 255), -1)
+                # for k in range(eef_kp_proj.shape[0]):
+                #     cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
+                #         (0, 0, 255), -1)
 
                 pred_kp_last = pred_kp_proj_last[cam]
                 for k in range(obj_kp_proj.shape[0]):
                     pred_lineset[cam].append([int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1]), int(pred_kp_last[k, 0]), int(pred_kp_last[k, 1]), 
                                          int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
 
+                img_overlay = img.copy()
                 for k in range(len(pred_lineset[cam])):
                     ln = pred_lineset[cam][k]
-                    cv2.line(img, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), 1)
-                
+                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
+
+                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
                 cv2.imwrite(os.path.join(save_dir_cam, f'{push_i:06}_pred.jpg'), img)
                 img_pred = img.copy()
 
                 # visualize gt similarly
                 img = img_orig.copy()
-                gt_kp_homo = np.concatenate([gt_kp, np.ones((gt_kp.shape[0], 1))], axis=1) # (N, 4)
+                gt_kp_homo = np.concatenate([gt_kp_vis, np.ones((gt_kp_vis.shape[0], 1))], axis=1) # (N, 4)
                 gt_kp_homo = gt_kp_homo @ extr.T  # (N, 4)
                 gt_kp_proj = np.zeros((gt_kp_homo.shape[0], 2))
                 gt_kp_proj[:, 0] = gt_kp_homo[:, 0] * fx / gt_kp_homo[:, 2] + cx
@@ -360,7 +406,7 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
                 gt_kp_proj_list.append(gt_kp_proj)
                 
                 for k in range(gt_kp_proj.shape[0]):
-                    cv2.circle(img, (int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1])), 3, 
+                    cv2.circle(img, (int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1])), point_size, 
                         (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
 
                 gt_kp_last = gt_kp_proj_last[cam]
@@ -369,14 +415,16 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
                                        int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
 
                 # also visualize eef in red
-                for k in range(eef_kp_proj.shape[0]):
-                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
-                        (0, 0, 255), -1)
+                # for k in range(eef_kp_proj.shape[0]):
+                #     cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
+                #         (0, 0, 255), -1)
 
+                img_overlay = img.copy()
                 for k in range(len(gt_lineset[cam])):
                     ln = gt_lineset[cam][k]
-                    cv2.line(img, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), 1)
+                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
 
+                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
                 cv2.imwrite(os.path.join(save_dir_cam, f'{push_i:06}_gt.jpg'), img)
                 img_gt = img.copy()
 
@@ -458,6 +506,14 @@ def rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps
     print(len(gt_state_list))
     print(len(pred_state_list))
 
+    # plot error
+    plt.figure(figsize=(10, 5))
+    plt.plot(error_list)
+    plt.xlabel("time step")
+    plt.ylabel("error")
+    plt.savefig(os.path.join(save_dir, 'error.png'), dpi=300)
+    plt.close()
+
 
 if __name__ == "__main__":
     args = gen_args()
@@ -471,15 +527,18 @@ if __name__ == "__main__":
     rigid_transform = True
     dense = True
     dense_str = "dense" if dense else ""
+    n_fps = 20
+    colormap = rgb_colormap(repeat=n_fps)
+    # colormap = label_colormap()
 
     save_dir = f"vis/rollout-vis-{checkpoint_dir_name}-model_{checkpoint_epoch}-{data_dir.split('/')[-1]}-{dense_str}"
     os.makedirs(save_dir, exist_ok=True)
 
-    rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, rigid_transform)
+    rollout_rigid(args, data_dir, save_dir, checkpoint, start_idx, rollout_steps, dense, colormap, n_fps, rigid_transform)
 
     for cam in range(4):
         img_path = os.path.join(save_dir, f"camera_{cam}")
-        frame_rate = 5
+        frame_rate = 4
         height = 360
         width = 640
         pred_out_path = os.path.join(img_path, "pred.mp4")
