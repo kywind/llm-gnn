@@ -30,23 +30,23 @@ def build_graph(args):
     verbose = True
     save = True
 
-    query = True
-    llm_parse_object = True
-    segment = True
+    query = False
+    llm_parse_object = False
+    segment = False
     llm_parse_material = False
 
     camera_indices = [0, 1, 2, 3]
-    # data_dir = "../data/2023-09-13-15-19-50-765863/"
-    # vis_dir = "vis/multiview-0-debug/"
-    # dataset_name = "d3fields"
-    # img_index = 0
+    data_dir = "../data/old/2023-09-13-15-19-50-765863/"
+    vis_dir = "vis/multiview-0-debug/"
+    dataset_name = "d3fields"
+    img_index = 0
 
     # data_dir = "../data/2023-09-12-17-37-14-943844/"
     # vis_dir = "vis/multiview-shoes-0/"
     # dataset_name = "d3fields"
     # img_index = 0
 
-    # data_dir = "../data/2023-09-12-17-37-14-943844/"
+    # data_dir = "../data/old/2023-09-12-17-37-14-943844/"
     # vis_dir = "vis/multiview-shoes-1/"
     # dataset_name = "d3fields"
     # img_index = 1000
@@ -56,10 +56,10 @@ def build_graph(args):
     # dataset_name = "ycb-flex"
     # img_index = 0
 
-    data_dir = "../data/shirt/"
-    vis_dir = "vis/shirt/"
-    dataset_name = "flex"
-    img_index = 0
+    # data_dir = "../data/shirt/"
+    # vis_dir = "vis/shirt/"
+    # dataset_name = "flex"
+    # img_index = 0
 
     if not segment:
         assert os.path.exists(vis_dir), "vis_dir does not exist"
@@ -105,8 +105,8 @@ def build_graph(args):
     else:
         # obj_list = ['a mouse', 'a keyboard', 'a pen', 'a box', 'a cup', 'a cup mat']
         # obj_list = ['mouse', 'keyboard', 'pen', 'box', 'cup', 'cup mat']
-        obj_list = ['a mustard bottle']
-        # obj_list = ['shoe']
+        # obj_list = ['a mustard bottle']
+        obj_list = ['shoe']
         # obj_list = ['camera', 'tripod', 'box', 'camera lens', 'camera body', 'computer mouse', 'computer keyboard', 
         #     'computer monitor', 'computer mouse pad', 'computer', 'remote control', 'mouse', 'keyboard', 'mouse pad', 
         #     'mousepad', 'pen', 'a box', 'coffee mug', 'a cookie', 'phone', 'tablet', 'a mousepad', 'box of cookies', 

@@ -28,7 +28,7 @@ class MultiviewParticleDataset:
         # self.global_scale = 24
         # self.depth_thres = 0.599 / 0.8
         # self.particle_num = 50
-        self.adj_thresh = 0.02
+        self.adj_thresh = 0.04
         self.num_max_rel = 7  # maximum number of relations per particle
         self.vis_dir = vis_dir
         self.visualize = visualize
