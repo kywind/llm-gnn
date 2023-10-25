@@ -216,8 +216,9 @@ class DynamicsPredictor(nn.Module):
         if args.phys_dim > 0:
             assert physics_param is not None
             # physics_param: B x N x 1
-            # physics_param_s = torch.zeros(B, n_s, 1).to(args.device)
-            # physics_param = torch.cat([physics_param[:, :, None], physics_param_s], 1)
+            phys_dim = physics_param.shape[2]
+            physics_param_s = torch.zeros(B, n_s, phys_dim).to(args.device)
+            physics_param = torch.cat([physics_param, physics_param_s], 1)
 
             # p_inputs: B x N x (... + phys_dim)
             p_inputs = torch.cat([p_inputs, physics_param], 2)

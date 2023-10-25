@@ -15,20 +15,22 @@ from preprocess import construct_edges_from_states
 from gnn.model_wrapper import gen_model
 
 
-def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max_nR=None):
+def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
     camera_indices = [0, 1, 2, 3]
     cam_idx = 0  # follow camera 1's particles
-    fixed_idx = False  # use same sampling indices for all frames
+    fixed_idx = True  # use same sampling indices for all frames
     fps_idx = None
 
-    n_particle = 20
-    push_thres = 0.05
+    # n_particle = 100
+    push_thres = dist_thresh
 
     # dense keypoints
-    eef_kypts_dir = os.path.join(data_dir, 'kypts', 'eef_kypts') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
+    eef_kypts_dir = os.path.join(save_dir, 'kypts', 'eef_kypts') # list of (2, eef_ptcl_num, 3) for each push, indexed by push_num (dense)
     os.makedirs(eef_kypts_dir, exist_ok=True)
-    obj_kypts_dir = os.path.join(data_dir, 'kypts', 'obj_kypts') # list of (ptcl_num, 3) for each push, indexed by push_num (dense)
+    obj_kypts_dir = os.path.join(save_dir, 'kypts', 'obj_kypts') # list of (ptcl_num, 3) for each push, indexed by push_num (dense)
     os.makedirs(obj_kypts_dir, exist_ok=True)
+    physics_dir = os.path.join(save_dir, 'kypts', 'physics')
+    os.makedirs(physics_dir, exist_ok=True)
 
     num_episodes = len(list(glob.glob(os.path.join(data_dir, f"episode_*"))))
 
@@ -111,8 +113,8 @@ def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max
                     z_end = zz + (z_end - z_start) * (fii + end_frame - start_frame) / (n_frames_push - 1)
                     dist = np.sqrt((x_start - x_end) ** 2 + (z_start - z_end) ** 2)
                     break
-            else:
-                import ipdb; ipdb.set_trace()
+            # else:
+            #     import ipdb; ipdb.set_trace()
 
             # speed = dist / (end_frame - start_frame)
 
@@ -138,23 +140,31 @@ def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max
 
         # if fi - curr_frame >= n_frames:
         dist_curr = np.sqrt((x_curr - x_fi) ** 2 + (z_curr - z_fi) ** 2)
-        if dist_curr >= push_thres:
+        particle_length = None
+        if dist_curr >= push_thres or (fi == end_frame and curr_frame < fi):
             # print(curr_episode, curr_step, curr_frame, fi, round(dist, 2), round(dist_curr, 2))
 
             # get particle
             particle = np.load(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/{curr_frame}_particles.npy"))
+            if particle_length is None: particle_length = particle.shape[0]
+            else: assert particle_length == particle.shape[0], "particle length not consistent"
             particle_next = np.load(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/{fi}_particles.npy"))
 
             # farthest sampling to get a set of particles for current frame
-            if (fixed_idx and fps_idx is None) or not fixed_idx:
-                particle_tensor = torch.from_numpy(particle).float()[None, ...]
-                fps_idx_tensor = farthest_point_sampler(particle_tensor, n_particle)[0]
-                fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+            # if (fixed_idx and fps_idx is None) or not fixed_idx:
+            #     particle_tensor = torch.from_numpy(particle).float()[None, ...]
+            #     assert particle_tensor.shape[1] >= n_particle
+            #     fps_idx_tensor = farthest_point_sampler(particle_tensor, n_particle)[0]
+            #     fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+
+            fps_idx = np.arange(particle.shape[0])
 
             particle = particle[fps_idx, :3]
             particle_next = particle_next[fps_idx , :3]
 
             # save obj keypoints
+            # assert particle.shape[0] == 100
+            # assert particle_next.shape[0] == 100
             obj_kp = np.stack([particle, particle_next], axis=0)  # (2, n_particle, 3)
             save_path = os.path.join(obj_kypts_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
             np.save(save_path, obj_kp)
@@ -169,6 +179,20 @@ def extract_pushes(args, data_dir, max_n=None, max_nobj=None, max_neef=None, max
             # save eef keypoints
             save_path = os.path.join(eef_kypts_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
             np.save(save_path, eef_kp)
+
+            # save physics
+            prop = properties_total[episode_idx]
+            prop_np = np.array([
+                prop['particle_radius'] * 10,
+                prop['num_particles'] * 0.001,
+                prop['length'] * 0.05,
+                prop['thickness'] * 0.02,
+                prop['dynamic_friction'] * 2,
+                prop['cluster_spacing'] * 0.1,
+                prop['global_stiffness'] * 1,
+            ])  # approximate normalization
+            save_path = os.path.join(physics_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
+            np.save(save_path, prop_np)
 
             img_vis = False
             if img_vis:

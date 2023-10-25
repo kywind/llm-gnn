@@ -13,8 +13,8 @@ from config import gen_args
 from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed, umeyama_algorithm
 
-from train.random_rigid_dataset import RandomRigidDynDataset
-from train.multistep_rigid_dataset import MultistepRigidDynDataset, construct_edges_from_states
+from train.random_rope_dataset import RandomRopeDynDataset
+from train.multistep_rope_dataset import MultistepRopeDynDataset, construct_edges_from_states
 import open3d as o3d
 
 import cv2
@@ -58,11 +58,12 @@ def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2
                                         mask=state_mask, 
                                         eef_mask=eef_mask,
                                         no_self_edge=True)
+    assert Rr[:, -1].sum() > 0
     Rr = Rr.detach()
     Rs = Rs.detach()
     return Rr, Rs
 
-def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=None):
+def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=None):
     torch.autograd.set_detect_anomaly(True)
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -74,13 +75,14 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
     os.makedirs(prep_save_dir, exist_ok=True)
     phases = ['train', 'valid']
     if ratios is None:
+        raise ValueError
         ratios = {"train": [0, 1], "valid": [0, 1]}
-    batch_size = 64
+    batch_size = 1024
     n_epoch = 1000
     log_interval = 5
-    dist_thresh = 0.02
+    dist_thresh = 0.05
     n_future = 3
-    datasets = {phase: MultistepRigidDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
+    datasets = {phase: MultistepRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
                 fixed_idx=False, dist_thresh=dist_thresh, n_future=n_future) for phase in phases}
 
     dataloaders = {phase: DataLoader(
@@ -127,26 +129,26 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
                         pred_state_p = pred_state[:, :gt_state.shape[1], :3].clone()
                         loss = [func(pred_state_p[gt_mask], gt_state[gt_mask]) for func in loss_funcs]
                         
-                        if args.use_rigid_loss:
-                            p_instance = data['p_instance']  # B, n_p, n_ins
-                            # p_rigid = data['p_rigid']  # B, n_ins  # assume all are rigid objects
-                            # p_rigid_per_particle = torch.sum(p_instance * p_rigid[:, None, :], 2, keepdim=True)  # B, n_p, 1
+                        # if args.use_rigid_loss:
+                        #     p_instance = data['p_instance']  # B, n_p, n_ins
+                        #     # p_rigid = data['p_rigid']  # B, n_ins  # assume all are rigid objects
+                        #     # p_rigid_per_particle = torch.sum(p_instance * p_rigid[:, None, :], 2, keepdim=True)  # B, n_p, 1
 
-                            pred_state_p_valid = pred_state_p[gt_mask]  # B', n_p, 3
-                            p_instance_valid = p_instance[gt_mask]  # B', n_p, n_ins
+                        #     pred_state_p_valid = pred_state_p[gt_mask]  # B', n_p, 3
+                        #     p_instance_valid = p_instance[gt_mask]  # B', n_p, n_ins
                             
-                            instance_pred_state_p = p_instance_valid.transpose(1, 2)[..., None] * pred_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
-                            rigid_instance_pred_state_p = instance_pred_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
-                            rigid_instance_mask = p_instance_valid.transpose(1, 2)[p_instance_valid.sum(1) > 0].bool()  # n_rigid, n_p
+                        #     instance_pred_state_p = p_instance_valid.transpose(1, 2)[..., None] * pred_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                        #     rigid_instance_pred_state_p = instance_pred_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                        #     rigid_instance_mask = p_instance_valid.transpose(1, 2)[p_instance_valid.sum(1) > 0].bool()  # n_rigid, n_p
 
-                            # don't use gt state, use input state instead
-                            input_state_p = data['state'][:, -1, :gt_state.shape[1]]  # B, n_p, 3
-                            input_state_p_valid = input_state_p[gt_mask]  # B', n_p, 3
-                            instance_input_state_p = p_instance_valid.transpose(1, 2)[..., None] * input_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
-                            rigid_instance_input_state_p = instance_input_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
+                        #     # don't use gt state, use input state instead
+                        #     input_state_p = data['state'][:, -1, :gt_state.shape[1]]  # B, n_p, 3
+                        #     input_state_p_valid = input_state_p[gt_mask]  # B', n_p, 3
+                        #     instance_input_state_p = p_instance_valid.transpose(1, 2)[..., None] * input_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
+                        #     rigid_instance_input_state_p = instance_input_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
                             
-                            # calculate rigid loss
-                            loss.append(rigid_loss(rigid_instance_input_state_p, rigid_instance_pred_state_p, rigid_instance_mask))
+                        #     # calculate rigid loss
+                        #     loss.append(rigid_loss(rigid_instance_input_state_p, rigid_instance_pred_state_p, rigid_instance_mask))
 
                         loss_sum += sum(loss)
 
@@ -165,7 +167,7 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
                                 "attrs": data["attrs"],  # (B, N+M, attr_dim)
                                 "p_rigid": data["p_rigid"],  # (B, n_instance,)
                                 "p_instance": data["p_instance"],  # (B, N, n_instance)
-                                "physics_param": data["physics_param"],  # (B, N,)
+                                "physics_param": data["physics_param"],  # (B, N, phys_dim)
                                 "state_mask": data["state_mask"],  # (B, N+M,)
                                 "eef_mask": data["eef_mask"],  # (B, N+M,)
                                 "obj_mask": data["obj_mask"],  # (B, N,)
@@ -205,7 +207,7 @@ def train_rigid(args, out_dir, data_dirs, dense=True, material='rigid', ratios=N
             plt.close()
 
 
-def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid', ratios=None):
+def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope', ratios=None):
     set_seed(args.random_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -217,7 +219,7 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
     # dense = False  # shoe_debug_3 and shoe_debug_4: False
     if ratios is None:
         ratios = {"train": [0, 1], "valid": [0, 1], "test": [0, 1]}
-    dataset = RandomRigidDynDataset(args, data_dirs, ratios, phase='test', dense=dense)
+    dataset = RandomRopeDynDataset(args, data_dirs, ratios, phase='test', dense=dense)
 
     dataloader = DataLoader(
         dataset,
@@ -292,48 +294,9 @@ def test_rigid(args, out_dir, data_dirs, checkpoint, dense=True, material='rigid
 if __name__ == "__main__":
     args = gen_args()
 
-    # out_dir = "../log/rigid_dense_debug_1"
-    # out_dir = "../log/rigid_dense_debug_2"  # pstep = 6
-    # out_dir = "../log/rigid_dense_debug_3"  # pstep = 6, output is 3 dim
-    # out_dir = "../log/rigid_dense_debug_4"  # pstep = 6, add randomness
-    out_dir = "../log/rigid_dense_debug_5"  # pstep = 6, output is 3 dim, add randomness
-    dense = True
-    train_data_dirs = {
-        "train": [
-            "../data/2023-08-30-03-04-49-509758",
-            "../data/2023-08-30-02-02-53-617979",
-            "../data/2023-08-30-01-45-16-257548",
-            "../data/2023-08-23-12-23-07-775716",
-            "../data/2023-08-30-02-20-39-572700",
-            "../data/2023-08-30-03-44-14-098121",
-            "../data/2023-08-30-00-54-02-790828",
-            "../data/2023-08-30-02-48-27-532912",
-            "../data/2023-08-29-17-49-04-904390",
-            "../data/2023-08-30-03-27-55-702301",
-            "../data/2023-08-29-18-07-15-165315",
-            "../data/2023-08-23-12-17-53-370195",
-            "../data/2023-08-30-04-16-04-497588",
-            # "../data/2023-08-29-21-23-47-258600",
-            "../data/2023-08-30-04-00-39-286249",
-            "../data/2023-08-29-20-10-13-123194",
-            "../data/2023-09-04-18-26-45-932029",
-            "../data/2023-08-30-00-47-16-839238",
-        ],
-        "valid": [
-            "../data/2023-08-23-12-08-12-201998",
-            "../data/2023-09-04-18-42-27-707743",
-        ],
-    }
-    train_rigid(args, out_dir, train_data_dirs, dense)
+    out_dir = "../log/rope_debug_3"
+    dense = True  # deprecated
+    train_data_dirs = "../data/rope"
+    ratios = {"train": [0, 0.9], "valid": [0.9, 1]}
+    train_rope(args, out_dir, train_data_dirs, dense, ratios=ratios)
 
-    # test_data_dirs = {
-    #     "test": [
-    #         "../data/2023-08-23-12-08-12-201998",
-    #         "../data/2023-09-04-18-42-27-707743",
-    #     ],
-    # }  # not in training set
-    test_data_dirs = "../data/2023-08-23-12-08-12-201998"  # not in training set
-    # test_data_dirs = "../data/2023-09-04-18-42-27-707743"  # not in training set
-    # test_data_dirs = "../data/2023-08-23-12-23-07-775716"  # in training set
-    checkpoint = "model_2000.pth"
-    # test_rigid(args, out_dir, test_data_dirs, checkpoint, dense)

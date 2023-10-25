@@ -73,7 +73,28 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
         args.rel_distance_dim = 0  # no distance
         args.rel_density_dim = 0  # no density
     
-    elif args.material in ['deformable', 'rope']:
+    elif args.material == 'rope':
+        # particle encoder
+        args.attr_dim = 2  # object and end effector
+        args.n_his = 1  # TODO consider history
+        args.state_dim = 3  # x, y, z
+        args.offset_dim = 0
+        args.action_dim = 3
+        args.pstep = 6
+        args.time_step = 1
+        args.dt = 1. / 60.
+        args.sequence_length = 4
+        args.phys_dim = 7  # TODO friction, density
+        args.density_dim = 0  # particle density
+
+        # relation encoder
+        args.rel_particle_dim = -1  # input dim
+        args.rel_attr_dim = 0  # no attribute
+        args.rel_group_dim = 0  # sum of difference of group one-hot vector
+        args.rel_distance_dim = 0  # no distance
+        args.rel_density_dim = 0  # no density
+
+    elif args.material == 'deformable':
         raise NotImplementedError
 
     else:
@@ -98,6 +119,7 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
             "rigid_out_dim": 0,
             "non_rigid_out_dim": 3,
         })
+        args.use_rigid_loss = False
     elif args.material in ['deformable']:
         kwargs.update({
             "predict_rigid": True,
@@ -105,6 +127,7 @@ def gen_model(args, material_dict, material='rigid', checkpoint=None, verbose=Fa
             "rigid_out_dim": 7,
             "non_rigid_out_dim": 3,
         })
+        args.use_rigid_loss = False
     else:
         pass
         ### LLM START ### set rigid predictor
