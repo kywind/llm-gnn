@@ -207,7 +207,8 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
     # push_end = t_list[start_idx, 1]
     episode_idx_start = int(obj_kp_path.split('/')[-1].split('.')[0].split('_')[0])
     frame_idx_start = int(obj_kp_path.split('/')[-1].split('.')[0].split('_')[1])
-    print(episode_idx_start, frame_idx_start)
+    frame_idx_end = int(obj_kp_path.split('/')[-1].split('.')[0].split('_')[2])
+    print(episode_idx_start, frame_idx_start, frame_idx_end)
 
     # fps sample keypoints for visualization
     kp = states[0, :obj_kp_num]
@@ -240,7 +241,7 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
     pred_kp_proj_last = []
     gt_kp_proj_last = []
     for cam in range(4):
-        img_path = os.path.join(data_dir, f'episode_{episode_idx_start}', f'camera_{cam}', f'{frame_idx_start}_color.png')
+        img_path = os.path.join(data_dir, f'episode_{episode_idx_start}', f'camera_{cam}', f'{frame_idx_start}_color.jpg')
         img = cv2.imread(img_path)
         intr = intr_list[cam]
         extr = extr_list[cam]
@@ -286,10 +287,10 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
         pred_kp_proj_last.append(obj_kp_proj)
         gt_kp_proj_last.append(obj_kp_proj)
         
-        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:03}_{frame_idx_start:03}_pred.jpg'), img)
-        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:03}_{frame_idx_start:03}_gt.jpg'), img)
+        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:06}_{frame_idx_start:06}_{frame_idx_end:06}_pred.jpg'), img)
+        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:06}_{frame_idx_start:06}_{frame_idx_end:06}_gt.jpg'), img)
         img = np.concatenate([img, img], axis=1)
-        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:03}_{frame_idx_start:03}_both.jpg'), img)
+        cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_start:06}_{frame_idx_start:06}_{frame_idx_end:06}_both.jpg'), img)
 
     graph = {key: torch.from_numpy(graph[key]).unsqueeze(0).to(device) for key in graph.keys()}
 
@@ -340,11 +341,12 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
             # push_i = t_list[i, 0]
             episode_idx_i = int(obj_kypts_paths[i].split('/')[-1].split('.')[0].split('_')[0])
             frame_idx_i = int(obj_kypts_paths[i].split('/')[-1].split('.')[0].split('_')[1])
+            frame_idx_i_end = int(obj_kypts_paths[i].split('/')[-1].split('.')[0].split('_')[2])
 
             pred_kp_proj_list = []
             gt_kp_proj_list = []
             for cam in range(4):
-                img_path = os.path.join(data_dir, f'episode_{episode_idx_i}', f'camera_{cam}', f'{frame_idx_i}_color.png')
+                img_path = os.path.join(data_dir, f'episode_{episode_idx_i}', f'camera_{cam}', f'{frame_idx_i}_color.jpg')
                 img_orig = cv2.imread(img_path)
                 img = img_orig.copy()
                 intr = intr_list[cam]
@@ -400,7 +402,7 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                     cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
 
                 cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:03}_{frame_idx_i:03}_pred.jpg'), img)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:06}_{frame_idx_i:06}_{frame_idx_i_end:06}_pred.jpg'), img)
                 img_pred = img.copy()
 
                 # visualize gt similarly
@@ -435,11 +437,11 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                     cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
 
                 cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:03}_{frame_idx_i:03}_gt.jpg'), img)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:06}_{frame_idx_i:06}_{frame_idx_i_end:06}_gt.jpg'), img)
                 img_gt = img.copy()
 
                 img = np.concatenate([img_pred, img_gt], axis=1)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:03}_{frame_idx_i:03}_both.jpg'), img)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx_i:06}_{frame_idx_i:06}_{frame_idx_i_end:06}_both.jpg'), img)
 
 
             pred_kp_proj_last = pred_kp_proj_list
@@ -533,7 +535,7 @@ if __name__ == "__main__":
     start_idx = 0
     rollout_steps = 100
     data_dir = "../data/rope"
-    checkpoint_dir_name = "rope_debug_3"
+    checkpoint_dir_name = "rope_new_debug_1"
     checkpoint_epoch = 500
     checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
     prep_save_dir = f"../log/{checkpoint_dir_name}/preprocess/rope"

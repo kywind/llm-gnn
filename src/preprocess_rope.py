@@ -40,7 +40,7 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
     steps_total = []
     properties_total = []
     for episode_idx in range(num_episodes):
-        num_frames = len(list(glob.glob(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/*_color.png"))))
+        num_frames = len(list(glob.glob(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/*_color.jpg"))))
         num_frames_total += num_frames
         ep_fr_list.extend([(episode_idx, fi) for fi in range(num_frames)])
 
@@ -93,8 +93,8 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
         dist = np.sqrt((x_start - x_end) ** 2 + (z_start - z_end) ** 2)
 
         # preprocessing start and end frame (only for v1 data)
-        preprocess_frames = True
-        if preprocess_frames:
+        v1_data = False
+        if v1_data:
             from scipy.spatial.distance import cdist
             speed = 1.0 / 100
             n_frames_push = int(dist / speed) + 1
@@ -113,10 +113,21 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
                     z_end = zz + (z_end - z_start) * (fii + end_frame - start_frame) / (n_frames_push - 1)
                     dist = np.sqrt((x_start - x_end) ** 2 + (z_start - z_end) ** 2)
                     break
-            # else:
-            #     import ipdb; ipdb.set_trace()
 
-            # speed = dist / (end_frame - start_frame)
+            x_curr = x_start + (x_end - x_start) * (curr_frame - start_frame) / (end_frame - start_frame)
+            z_curr = z_start + (z_end - z_start) * (curr_frame - start_frame) / (end_frame - start_frame)
+            x_fi = x_start + (x_end - x_start) * (fi - start_frame) / (end_frame - start_frame)
+            z_fi = z_start + (z_end - z_start) * (fi - start_frame) / (end_frame - start_frame)
+
+        else:
+            # new data
+            eef_particles_curr = np.load(os.path.join(data_dir, f"episode_{episode_idx}/camera_0/{curr_frame}_endeffector.npy"))
+            eef_particles_fi = np.load(os.path.join(data_dir, f"episode_{episode_idx}/camera_0/{fi}_endeffector.npy"))
+
+            x_curr = eef_particles_curr[0]
+            z_curr = eef_particles_curr[1]
+            x_fi = eef_particles_fi[0]
+            z_fi = eef_particles_fi[1]
 
         # example properties:
         # 0
@@ -132,11 +143,6 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
         #     print(curr_episode, curr_step, curr_frame, fi)
         #     curr_frame = fi
         # continue
-
-        x_curr = x_start + (x_end - x_start) * (curr_frame - start_frame) / (end_frame - start_frame)
-        z_curr = z_start + (z_end - z_start) * (curr_frame - start_frame) / (end_frame - start_frame)
-        x_fi = x_start + (x_end - x_start) * (fi - start_frame) / (end_frame - start_frame)
-        z_fi = z_start + (z_end - z_start) * (fi - start_frame) / (end_frame - start_frame)
 
         # if fi - curr_frame >= n_frames:
         dist_curr = np.sqrt((x_curr - x_fi) ** 2 + (z_curr - z_fi) ** 2)
@@ -166,7 +172,7 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
             # assert particle.shape[0] == 100
             # assert particle_next.shape[0] == 100
             obj_kp = np.stack([particle, particle_next], axis=0)  # (2, n_particle, 3)
-            save_path = os.path.join(obj_kypts_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
+            save_path = os.path.join(obj_kypts_dir, f'{episode_idx:06}_{curr_frame:06}_{fi:06}.npy')
             np.save(save_path, obj_kp)
 
             # get action for current frame
@@ -177,7 +183,7 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
             eef_kp[:, :, 2] *= -1
 
             # save eef keypoints
-            save_path = os.path.join(eef_kypts_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
+            save_path = os.path.join(eef_kypts_dir, f'{episode_idx:06}_{curr_frame:06}_{fi:06}.npy')
             np.save(save_path, eef_kp)
 
             # save physics
@@ -191,14 +197,14 @@ def extract_pushes(args, data_dir, save_dir, dist_thresh=0.05):
                 prop['cluster_spacing'] * 0.1,
                 prop['global_stiffness'] * 1,
             ])  # approximate normalization
-            save_path = os.path.join(physics_dir, f'{episode_idx:03}_{curr_frame:03}.npy')
+            save_path = os.path.join(physics_dir, f'{episode_idx:06}_{curr_frame:06}_{fi:06}.npy')
             np.save(save_path, prop_np)
 
             img_vis = False
             if img_vis:
                 intr = np.load(os.path.join(data_dir, f"camera_intrinsic_params.npy"))[cam_idx]
                 extr = np.load(os.path.join(data_dir, f"camera_extrinsic_matrix.npy"))[cam_idx]
-                img = cv2.imread(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/{curr_frame}_color.png"))
+                img = cv2.imread(os.path.join(data_dir, f"episode_{episode_idx}/camera_{cam_idx}/{curr_frame}_color.jpg"))
                 # transform particle to camera coordinate
                 particle_cam = opengl2cam(particle, extr)
                 # particle_cam = (extr @ np.concatenate([particle, np.ones((particle.shape[0], 1))], axis=1).T).T
@@ -234,4 +240,4 @@ if __name__ == "__main__":
     ]
     for data_dir in data_dir_list:
         if os.path.isdir(data_dir):
-            extract_pushes(args, data_dir)
+            extract_pushes(args, data_dir, save_dir=data_dir)

@@ -294,7 +294,7 @@ def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope',
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rope_debug_3"
+    out_dir = "../log/rope_new_debug_2"
     dense = True  # deprecated
     train_data_dirs = "../data/rope"
     ratios = {"train": [0, 0.9], "valid": [0.9, 1]}
