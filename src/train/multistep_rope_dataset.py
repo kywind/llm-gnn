@@ -5,6 +5,7 @@ import os
 import random
 import re
 import pickle
+import time
 
 import cv2
 import numpy as np
@@ -191,6 +192,7 @@ class MultistepRopeDynDataset(Dataset):
 
     
     def __getitem__(self, i):
+        time1 = time.time()
         max_n = self.max_n
         max_nobj = self.max_nobj
         max_neef = self.max_neef
@@ -462,4 +464,6 @@ class MultistepRopeDynDataset(Dataset):
             "obj_mask": obj_mask,  # (N,)
         }
         # print([f"{key}: {val.shape}" for key, val in graph.items()])
+        time2 = time.time()
+        print(f'{time2 - time1:.6f}')
         return graph

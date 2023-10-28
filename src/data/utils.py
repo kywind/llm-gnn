@@ -471,6 +471,22 @@ def fps_rad(pcd, radius):
     pcd_fps = np.stack(pcd_fps_lst, axis=0)
     return pcd_fps
 
+def fps_rad_idx(pcd, radius):
+    # pcd: (n, 3) numpy array
+    # pcd_fps: (-1, 3) numpy array
+    # radius: float
+    rand_idx = np.random.randint(pcd.shape[0])
+    pcd_fps_lst = [pcd[rand_idx]]
+    idx_lst = [rand_idx]
+    dist = np.linalg.norm(pcd - pcd_fps_lst[0], axis=1)
+    while dist.max() > radius:
+        pcd_fps_lst.append(pcd[dist.argmax()])
+        idx_lst.append(dist.argmax())
+        dist = np.minimum(dist, np.linalg.norm(pcd - pcd_fps_lst[-1], axis=1))
+    pcd_fps = np.stack(pcd_fps_lst, axis=0)
+    idx_lst = np.stack(idx_lst, axis=0)
+    return pcd_fps, idx_lst
+
 def fps_np(pcd, particle_num, init_idx=-1):
     # pcd: (n, c) numpy array
     # pcd_fps: (particle_num, c) numpy array

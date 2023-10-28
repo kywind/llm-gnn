@@ -4,6 +4,7 @@ numpy
 torch
 torchvision
 torchaudio
+torch_geometric
 scipy
 opencv-python
 matplotlib

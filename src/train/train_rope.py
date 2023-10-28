@@ -1,6 +1,7 @@
 import glob
 import numpy as np
 import os
+import time
 import sys
 import torch
 import torchvision
@@ -14,7 +15,8 @@ from gnn.model_wrapper import gen_model
 from gnn.utils import set_seed, umeyama_algorithm
 
 from train.random_rope_dataset import RandomRopeDynDataset
-from train.multistep_rope_dataset import MultistepRopeDynDataset, construct_edges_from_states
+from train.multistep_rope_dataset import MultistepRopeDynDataset
+from train.canonical_rope_dataset import CanonicalRopeDynDataset, construct_edges_from_states
 import open3d as o3d
 
 import cv2
@@ -77,13 +79,15 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
     if ratios is None:
         raise ValueError
         ratios = {"train": [0, 1], "valid": [0, 1]}
-    batch_size = 1024
+    batch_size = 256
     n_epoch = 1000
     log_interval = 5
-    dist_thresh = 0.05
+    dist_thresh_range = [0.02, 0.05]
     n_future = 3
-    datasets = {phase: MultistepRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
-                fixed_idx=False, dist_thresh=dist_thresh, n_future=n_future) for phase in phases}
+    # datasets = {phase: MultistepRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
+    #             fixed_idx=False, dist_thresh=0.05, n_future=n_future) for phase in phases}
+    datasets = {phase: CanonicalRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, 
+                fixed_idx=False, dist_thresh_range=dist_thresh_range, n_future=n_future) for phase in phases}
 
     dataloaders = {phase: DataLoader(
         datasets[phase],
@@ -96,9 +100,11 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_plot_list_train = []
-    loss_plot_list_valid = []
+    loss_plot_list_valid = [] 
     for epoch in range(n_epoch):
+        time1 = time.time()
         for phase in phases:
+            datasets[phase].reset_epoch()
             with grad_manager(phase):
                 if phase == 'train': model.train()
                 else: model.eval()
@@ -111,9 +117,8 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
 
                     future_state = data['state_future']  # (B, n_future, n_p, 3)
                     future_mask = data['state_future_mask']  # (B, n_future)
-                    future_eef = data['eef_future']  # (B, n_future, n_p+n_s, 3)
-                    future_action = data['action_future']  # (B, n_future, n_p+n_s, 3)
-                    assert torch.sum(future_action[:, 0] - data['action']) < 1e-6
+                    future_eef = data['eef_future']  # (B, n_future-1, n_p+n_s, 3)
+                    future_action = data['action_future']  # (B, n_future-1, n_p+n_s, 3)
 
                     for fi in range(n_future):
                         gt_state = future_state[:, fi].clone()  # (B, n_p, 3)
@@ -128,34 +133,13 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
 
                         pred_state_p = pred_state[:, :gt_state.shape[1], :3].clone()
                         loss = [func(pred_state_p[gt_mask], gt_state[gt_mask]) for func in loss_funcs]
-                        
-                        # if args.use_rigid_loss:
-                        #     p_instance = data['p_instance']  # B, n_p, n_ins
-                        #     # p_rigid = data['p_rigid']  # B, n_ins  # assume all are rigid objects
-                        #     # p_rigid_per_particle = torch.sum(p_instance * p_rigid[:, None, :], 2, keepdim=True)  # B, n_p, 1
-
-                        #     pred_state_p_valid = pred_state_p[gt_mask]  # B', n_p, 3
-                        #     p_instance_valid = p_instance[gt_mask]  # B', n_p, n_ins
-                            
-                        #     instance_pred_state_p = p_instance_valid.transpose(1, 2)[..., None] * pred_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
-                        #     rigid_instance_pred_state_p = instance_pred_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
-                        #     rigid_instance_mask = p_instance_valid.transpose(1, 2)[p_instance_valid.sum(1) > 0].bool()  # n_rigid, n_p
-
-                        #     # don't use gt state, use input state instead
-                        #     input_state_p = data['state'][:, -1, :gt_state.shape[1]]  # B, n_p, 3
-                        #     input_state_p_valid = input_state_p[gt_mask]  # B', n_p, 3
-                        #     instance_input_state_p = p_instance_valid.transpose(1, 2)[..., None] * input_state_p_valid[:, None, :]  # B', n_ins, n_p, 3
-                        #     rigid_instance_input_state_p = instance_input_state_p[p_instance_valid.sum(1) > 0]  # n_rigid, n_p, 3
-                            
-                        #     # calculate rigid loss
-                        #     loss.append(rigid_loss(rigid_instance_input_state_p, rigid_instance_pred_state_p, rigid_instance_mask))
 
                         loss_sum += sum(loss)
 
                         if fi < n_future - 1:
                             # build next graph
-                            next_eef = future_eef[:, fi+1].clone()  # (B, n_p+n_s, 3)
-                            next_action = future_action[:, fi+1].clone()  # (B, n_p+n_s, 3)
+                            next_eef = future_eef[:, fi].clone()  # (B, n_p+n_s, 3)
+                            next_action = future_action[:, fi].clone()  # (B, n_p+n_s, 3)
                             next_state = next_eef.unsqueeze(1)  # (B, 1, n_p+n_s, 3)
                             next_state[:, -1, :pred_state_p.shape[1]] = pred_state_p  # TODO n_his > 1
                             next_graph = {
@@ -182,6 +166,9 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
                             loss_sum_list.append(loss_sum.item())
                     if phase == 'valid':
                         loss_sum_list.append(loss_sum.item())
+                        # if i % log_interval == 0:
+                        #     print(f'[Valid] Epoch {epoch}, iter {i}, loss {loss_sum.item()}')
+                        #     loss_sum_list.append(loss_sum.item())
                 if phase == 'valid':
                     print(f'\nEpoch {epoch}, valid loss {np.mean(loss_sum_list)}\n')
 
@@ -189,22 +176,26 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
                     loss_plot_list_train.append(np.mean(loss_sum_list))
                 if phase == 'valid':
                     loss_plot_list_valid.append(np.mean(loss_sum_list))
-                
-        if ((epoch + 1) < 100 and (epoch + 1) % 10 == 0) or (epoch + 1) % 100 == 0:
+        
+        time2 = time.time()
+        print(f'Epoch {epoch} time: {time2 - time1}')
+        if ((epoch + 1) < 200 and (epoch + 1) % 10 == 0) or (epoch + 1) % 100 == 0:
             torch.save(model.state_dict(), os.path.join(out_dir, 'checkpoints', f'model_{(epoch + 1)}.pth'))
     
-            # save figures
-            plt.figure(figsize=(20, 5))
-            plt.plot(loss_plot_list_train, label='train')
-            plt.plot(loss_plot_list_valid, label='valid')
-            # ax = plt.gca()
-            # y_min = min(min(loss_plot_list_train), min(loss_plot_list_valid))
-            # y_min = min(loss_plot_list_valid)
-            # y_max = min(5 * y_min, max(max(loss_plot_list_train), max(loss_plot_list_valid)))
-            # ax.set_ylim([0, y_max])
-            plt.legend()
-            plt.savefig(os.path.join(out_dir, 'loss.png'), dpi=300)
-            plt.close()
+        # plot figures
+        plt.figure(figsize=(20, 5))
+        plt.plot(loss_plot_list_train, label='train')
+        plt.plot(loss_plot_list_valid, label='valid')
+        # cut off figure
+        ax = plt.gca()
+        y_min = min(min(loss_plot_list_train), min(loss_plot_list_valid))
+        y_min = min(loss_plot_list_valid)
+        y_max = min(3 * y_min, max(max(loss_plot_list_train), max(loss_plot_list_valid)))
+        ax.set_ylim([0, y_max])
+        # save
+        plt.legend()
+        plt.savefig(os.path.join(out_dir, 'loss.png'), dpi=300)
+        plt.close()
 
 
 def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope', ratios=None):
@@ -294,7 +285,7 @@ def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope',
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rope_new_debug_2"
+    out_dir = "../log/rope_can_debug_1"
     dense = True  # deprecated
     train_data_dirs = "../data/rope"
     ratios = {"train": [0, 0.9], "valid": [0.9, 1]}
