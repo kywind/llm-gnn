@@ -304,6 +304,27 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
             cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), 3, 
                 (0, 0, 255), -1)
 
+        # visualize edges
+        for k in range(Rr.shape[0]):
+            if Rr[k].sum() == 0: continue
+            receiver = Rr[k].argmax()
+            sender = Rs[k].argmax()
+            if receiver >= max_nobj:  # eef
+                cv2.line(img, 
+                    (int(eef_kp_proj[receiver - max_nobj, 0]), int(eef_kp_proj[receiver - max_nobj, 1])), 
+                    (int(obj_kp_proj[sender, 0]), int(obj_kp_proj[sender, 1])), 
+                    (0, 0, 255), 2)
+            elif sender >= max_nobj:  # eef
+                cv2.line(img, 
+                    (int(eef_kp_proj[sender - max_nobj, 0]), int(eef_kp_proj[sender - max_nobj, 1])), 
+                    (int(obj_kp_proj[receiver, 0]), int(obj_kp_proj[receiver, 1])), 
+                    (0, 0, 255), 2)
+            else:
+                cv2.line(img, 
+                    (int(obj_kp_proj[receiver, 0]), int(obj_kp_proj[receiver, 1])), 
+                    (int(obj_kp_proj[sender, 0]), int(obj_kp_proj[sender, 1])), 
+                    (0, 255, 0), 2)
+
         pred_kp_proj_last.append(obj_kp_proj)
         gt_kp_proj_last.append(obj_kp_proj)
         
@@ -371,117 +392,6 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                     break
             next_pair = valid_pairs[int(len(valid_pairs)/2)]  # pick the middle one
             _, current_start, current_end = next_pair
-
-            # load next eef keypoint
-            eef_kp_raw = np.load(eef_kypts_paths[current_start]).astype(np.float32)
-            x_eef = eef_kp_raw[0]
-            z_eef = eef_kp_raw[1]
-            y = np.mean(obj_kp[:, 1])
-            eef_kp = np.array([[x_eef, y, -z_eef]], dtype=np.float32)
-
-            pred_kp_proj_list = []
-            gt_kp_proj_list = []
-            for cam in range(4):
-                img_path = os.path.join(data_dir, f'episode_{episode_idx}', f'camera_{cam}', f'{current_start}_color.jpg')
-                img_orig = cv2.imread(img_path)
-                img = img_orig.copy()
-                intr = intr_list[cam]
-                extr = extr_list[cam]
-                save_dir_cam = os.path.join(save_dir, f'camera_{cam}')
-
-                # transform keypoints
-                obj_kp_homo = np.concatenate([obj_kp_vis, np.ones((obj_kp_vis.shape[0], 1))], axis=1) # (N, 4)
-                obj_kp_homo = obj_kp_homo @ extr.T  # (N, 4)
-
-                obj_kp_homo[:, 1] *= -1
-                obj_kp_homo[:, 2] *= -1
-
-                # project keypoints
-                fx, fy, cx, cy = intr
-                obj_kp_proj = np.zeros((obj_kp_homo.shape[0], 2))
-                obj_kp_proj[:, 0] = obj_kp_homo[:, 0] * fx / obj_kp_homo[:, 2] + cx
-                obj_kp_proj[:, 1] = obj_kp_homo[:, 1] * fy / obj_kp_homo[:, 2] + cy
-
-                pred_kp_proj_list.append(obj_kp_proj)
-
-                # also transform eef keypoints
-                eef_kp_homo = np.concatenate([eef_kp, np.ones((eef_kp.shape[0], 1))], axis=1) # (N, 4)
-                eef_kp_homo = eef_kp_homo @ extr.T  # (N, 4)
-
-                eef_kp_homo[:, 1] *= -1
-                eef_kp_homo[:, 2] *= -1
-
-                # also project eef keypoints
-                fx, fy, cx, cy = intr
-                eef_kp_proj = np.zeros((eef_kp_homo.shape[0], 2))
-                eef_kp_proj[:, 0] = eef_kp_homo[:, 0] * fx / eef_kp_homo[:, 2] + cx
-                eef_kp_proj[:, 1] = eef_kp_homo[:, 1] * fy / eef_kp_homo[:, 2] + cy
-
-                # visualize
-                for k in range(obj_kp_proj.shape[0]):
-                    cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), point_size, 
-                        (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
-
-                # also visualize eef in red
-                for k in range(eef_kp_proj.shape[0]):
-                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
-                        (0, 0, 255), -1)
-
-                pred_kp_last = pred_kp_proj_last[cam]
-                for k in range(obj_kp_proj.shape[0]):
-                    pred_lineset[cam].append([int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1]), int(pred_kp_last[k, 0]), int(pred_kp_last[k, 1]), 
-                                         int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
-
-                img_overlay = img.copy()
-                for k in range(len(pred_lineset[cam])):
-                    ln = pred_lineset[cam][k]
-                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
-
-                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_pred.jpg'), img)
-                img_pred = img.copy()
-
-                # visualize gt similarly
-                img = img_orig.copy()
-                gt_kp_homo = np.concatenate([gt_kp_vis, np.ones((gt_kp_vis.shape[0], 1))], axis=1) # (N, 4)
-                gt_kp_homo = gt_kp_homo @ extr.T  # (N, 4)
-                gt_kp_homo[:, 1] *= -1
-                gt_kp_homo[:, 2] *= -1        
-                gt_kp_proj = np.zeros((gt_kp_homo.shape[0], 2))
-                gt_kp_proj[:, 0] = gt_kp_homo[:, 0] * fx / gt_kp_homo[:, 2] + cx
-                gt_kp_proj[:, 1] = gt_kp_homo[:, 1] * fy / gt_kp_homo[:, 2] + cy
-
-                gt_kp_proj_list.append(gt_kp_proj)
-                
-                for k in range(gt_kp_proj.shape[0]):
-                    cv2.circle(img, (int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1])), point_size, 
-                        (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
-
-                gt_kp_last = gt_kp_proj_last[cam]
-                for k in range(gt_kp_proj.shape[0]):
-                    gt_lineset[cam].append([int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1]), int(gt_kp_last[k, 0]), int(gt_kp_last[k, 1]), 
-                                       int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
-
-                # also visualize eef in red
-                for k in range(eef_kp_proj.shape[0]):
-                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
-                        (0, 0, 255), -1)
-
-                img_overlay = img.copy()
-                for k in range(len(gt_lineset[cam])):
-                    ln = gt_lineset[cam][k]
-                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
-
-                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_gt.jpg'), img)
-                img_gt = img.copy()
-
-                img = np.concatenate([img_pred, img_gt], axis=1)
-                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_both.jpg'), img)
-
-
-            pred_kp_proj_last = pred_kp_proj_list
-            gt_kp_proj_last = gt_kp_proj_list
 
             # generate next graph
             # load kypts
@@ -565,7 +475,154 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                 "obj_mask": graph["obj_mask"],  # (N,)
             }
             graph = next_graph
-    
+
+            # visualize
+            pred_kp_proj_list = []
+            gt_kp_proj_list = []
+            for cam in range(4):
+                img_path = os.path.join(data_dir, f'episode_{episode_idx}', f'camera_{cam}', f'{current_start}_color.jpg')
+                img_orig = cv2.imread(img_path)
+                img = img_orig.copy()
+                intr = intr_list[cam]
+                extr = extr_list[cam]
+                save_dir_cam = os.path.join(save_dir, f'camera_{cam}')
+
+                # transform keypoints
+                obj_kp_homo = np.concatenate([obj_kp_vis, np.ones((obj_kp_vis.shape[0], 1))], axis=1) # (N, 4)
+                obj_kp_homo = obj_kp_homo @ extr.T  # (N, 4)
+
+                obj_kp_homo[:, 1] *= -1
+                obj_kp_homo[:, 2] *= -1
+
+                # project keypoints
+                fx, fy, cx, cy = intr
+                obj_kp_proj = np.zeros((obj_kp_homo.shape[0], 2))
+                obj_kp_proj[:, 0] = obj_kp_homo[:, 0] * fx / obj_kp_homo[:, 2] + cx
+                obj_kp_proj[:, 1] = obj_kp_homo[:, 1] * fy / obj_kp_homo[:, 2] + cy
+
+                pred_kp_proj_list.append(obj_kp_proj)
+
+                # also transform eef keypoints
+                eef_kp_vis = eef_kp[0, :eef_kp_num]
+                eef_kp_homo = np.concatenate([eef_kp_vis, np.ones((eef_kp_vis.shape[0], 1))], axis=1) # (N, 4)
+                eef_kp_homo = eef_kp_homo @ extr.T  # (N, 4)
+
+                eef_kp_homo[:, 1] *= -1
+                eef_kp_homo[:, 2] *= -1
+
+                # also project eef keypoints
+                fx, fy, cx, cy = intr
+                eef_kp_proj = np.zeros((eef_kp_homo.shape[0], 2))
+                eef_kp_proj[:, 0] = eef_kp_homo[:, 0] * fx / eef_kp_homo[:, 2] + cx
+                eef_kp_proj[:, 1] = eef_kp_homo[:, 1] * fy / eef_kp_homo[:, 2] + cy
+
+                # visualize
+                for k in range(obj_kp_proj.shape[0]):
+                    cv2.circle(img, (int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1])), point_size, 
+                        (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
+
+                # also visualize eef in red
+                for k in range(eef_kp_proj.shape[0]):
+                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
+                        (0, 0, 255), -1)
+
+                pred_kp_last = pred_kp_proj_last[cam]
+                for k in range(obj_kp_proj.shape[0]):
+                    pred_lineset[cam].append([int(obj_kp_proj[k, 0]), int(obj_kp_proj[k, 1]), int(pred_kp_last[k, 0]), int(pred_kp_last[k, 1]), 
+                                         int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
+                
+                # visualize edges
+                for k in range(Rr.shape[0]):
+                    if Rr[k].sum() == 0: continue
+                    receiver = Rr[k].argmax()
+                    sender = Rs[k].argmax()
+                    if receiver >= max_nobj:  # eef
+                        cv2.line(img, 
+                            (int(eef_kp_proj[receiver - max_nobj, 0]), int(eef_kp_proj[receiver - max_nobj, 1])), 
+                            (int(obj_kp_proj[sender, 0]), int(obj_kp_proj[sender, 1])), 
+                            (0, 0, 255), 2)
+                    elif sender >= max_nobj:  # eef
+                        cv2.line(img, 
+                            (int(eef_kp_proj[sender - max_nobj, 0]), int(eef_kp_proj[sender - max_nobj, 1])), 
+                            (int(obj_kp_proj[receiver, 0]), int(obj_kp_proj[receiver, 1])), 
+                            (0, 0, 255), 2)
+                    else:
+                        cv2.line(img, 
+                            (int(obj_kp_proj[receiver, 0]), int(obj_kp_proj[receiver, 1])), 
+                            (int(obj_kp_proj[sender, 0]), int(obj_kp_proj[sender, 1])), 
+                            (0, 255, 0), 2)
+
+                img_overlay = img.copy()
+                for k in range(len(pred_lineset[cam])):
+                    ln = pred_lineset[cam][k]
+                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
+
+                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_pred.jpg'), img)
+                img_pred = img.copy()
+
+                # visualize gt similarly
+                img = img_orig.copy()
+                gt_kp_homo = np.concatenate([gt_kp_vis, np.ones((gt_kp_vis.shape[0], 1))], axis=1) # (N, 4)
+                gt_kp_homo = gt_kp_homo @ extr.T  # (N, 4)
+                gt_kp_homo[:, 1] *= -1
+                gt_kp_homo[:, 2] *= -1        
+                gt_kp_proj = np.zeros((gt_kp_homo.shape[0], 2))
+                gt_kp_proj[:, 0] = gt_kp_homo[:, 0] * fx / gt_kp_homo[:, 2] + cx
+                gt_kp_proj[:, 1] = gt_kp_homo[:, 1] * fy / gt_kp_homo[:, 2] + cy
+
+                gt_kp_proj_list.append(gt_kp_proj)
+                
+                for k in range(gt_kp_proj.shape[0]):
+                    cv2.circle(img, (int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1])), point_size, 
+                        (int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0])), -1)
+
+                gt_kp_last = gt_kp_proj_last[cam]
+                for k in range(gt_kp_proj.shape[0]):
+                    gt_lineset[cam].append([int(gt_kp_proj[k, 0]), int(gt_kp_proj[k, 1]), int(gt_kp_last[k, 0]), int(gt_kp_last[k, 1]), 
+                                       int(colormap[k, 2]), int(colormap[k, 1]), int(colormap[k, 0]), i])
+
+                # also visualize eef in red
+                for k in range(eef_kp_proj.shape[0]):
+                    cv2.circle(img, (int(eef_kp_proj[k, 0]), int(eef_kp_proj[k, 1])), point_size, 
+                        (0, 0, 255), -1)
+
+                # visualize edges
+                for k in range(Rr.shape[0]):
+                    if Rr[k].sum() == 0: continue
+                    receiver = Rr[k].argmax()
+                    sender = Rs[k].argmax()
+                    if receiver >= max_nobj:  # eef
+                        cv2.line(img, 
+                            (int(eef_kp_proj[receiver - max_nobj, 0]), int(eef_kp_proj[receiver - max_nobj, 1])), 
+                            (int(gt_kp_proj[sender, 0]), int(gt_kp_proj[sender, 1])), 
+                            (0, 0, 255), 2)
+                    elif sender >= max_nobj:  # eef
+                        cv2.line(img, 
+                            (int(eef_kp_proj[sender - max_nobj, 0]), int(eef_kp_proj[sender - max_nobj, 1])), 
+                            (int(gt_kp_proj[receiver, 0]), int(gt_kp_proj[receiver, 1])), 
+                            (0, 0, 255), 2)
+                    else:
+                        cv2.line(img, 
+                            (int(gt_kp_proj[receiver, 0]), int(gt_kp_proj[receiver, 1])), 
+                            (int(gt_kp_proj[sender, 0]), int(gt_kp_proj[sender, 1])), 
+                            (0, 255, 0), 2)
+
+                img_overlay = img.copy()
+                for k in range(len(gt_lineset[cam])):
+                    ln = gt_lineset[cam][k]
+                    cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
+
+                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_gt.jpg'), img)
+                img_gt = img.copy()
+
+                img = np.concatenate([img_pred, img_gt], axis=1)
+                cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_both.jpg'), img)
+
+            pred_kp_proj_last = pred_kp_proj_list
+            gt_kp_proj_last = gt_kp_proj_list
+
     print(len(gt_state_list))
     print(len(pred_state_list))
 
@@ -580,7 +637,7 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
 
 if __name__ == "__main__":
     args = gen_args()
-    episode_idx = 198
+    episode_idx = 0
     start_idx = 0
     rollout_steps = 100
     data_dir = "../data/rope"
@@ -588,11 +645,14 @@ if __name__ == "__main__":
     checkpoint_epoch = 300
     checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
     prep_save_dir = f"../log/{checkpoint_dir_name}/preprocess/rope"
-    # colormap = rgb_colormap(repeat=n_fps_vis)
-    colormap = label_colormap()
+    colormap = rgb_colormap(repeat=100)  # only red
+    # colormap = label_colormap()
 
     save_dir = f"vis/rollout-vis-{checkpoint_dir_name}-model_{checkpoint_epoch}-{data_dir.split('/')[-1]}"# -{dense_str}"
     os.makedirs(save_dir, exist_ok=True)
+
+    print(f"rollout {episode_idx} from {start_idx} to {start_idx + rollout_steps} with {checkpoint}")
+    print(f"saving to {save_dir}")
 
     rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_idx, start_idx, rollout_steps, colormap)
 
