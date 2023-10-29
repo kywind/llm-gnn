@@ -87,7 +87,6 @@ class CanonicalRopeDynDataset(Dataset):
         fixed_idx=False,
         dist_thresh_range=[0.02, 0.05],  # for selecting pushes during preprocessing
         n_future=1,
-        # adj_thresh_range=[0.2, 0.3],  # for constructing edges
     ):
         self.args = args
         self.phase = phase
@@ -99,12 +98,11 @@ class CanonicalRopeDynDataset(Dataset):
         self.fps_idx_list = []  # to be filled in __getitem__
         self.n_future = n_future
         self.dist_thresh_range = dist_thresh_range
-        # self.adj_thresh_range = adj_thresh_range
 
         self.max_n = 1  # max number of objects
         self.max_nobj = 100  # max number of object points
         self.max_neef = 1  # max number of eef points
-        self.fps_radius = 0.1  # radius for farthest point sampling
+        self.fps_radius_range = [0.08, 0.12]  # radius for farthest point sampling
         self.top_k = 100  # maximal top k particles to consider for first step fps
 
         self.obj_kypts_paths = []
@@ -226,7 +224,7 @@ class CanonicalRopeDynDataset(Dataset):
         max_nobj = self.max_nobj
         max_neef = self.max_neef
         n_future = self.n_future
-        fps_radius = self.fps_radius
+        fps_radius_range = self.fps_radius_range
 
         pair = self.pair_lists[i]
         episode_idx, start, end = pair
@@ -274,6 +272,7 @@ class CanonicalRopeDynDataset(Dataset):
 
                 # downsample to uniform radius
                 downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
+                fps_radius = np.random.uniform(fps_radius_range[0], fps_radius_range[1])
                 _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
                 fps_idx_2 = fps_idx_2.astype(int)
                 fps_idx = fps_idx_1[fps_idx_2]
