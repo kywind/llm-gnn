@@ -29,7 +29,7 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    adj_thresh = 0.25  # constructing edges
+    adj_thresh = 1.55  # constructing edges
     top_k = 100  # first step downsampling
     fps_radius = 0.1  # second step downsampling
     max_nR = 500
@@ -613,7 +613,6 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                     ln = gt_lineset[cam][k]
                     cv2.line(img_overlay, (ln[0], ln[1]), (ln[2], ln[3]), (ln[4], ln[5], ln[6]), line_size)
 
-                cv2.addWeighted(img_overlay, line_alpha, img, 1 - line_alpha, 0, img)
                 cv2.imwrite(os.path.join(save_dir_cam, f'{episode_idx:06}_{current_start:06}_{current_end:06}_gt.jpg'), img)
                 img_gt = img.copy()
 
@@ -641,8 +640,8 @@ if __name__ == "__main__":
     start_idx = 0
     rollout_steps = 100
     data_dir = "../data/rope"
-    checkpoint_dir_name = "rope_can_debug_3"
-    checkpoint_epoch = 300
+    checkpoint_dir_name = "rope_can_debug_connected_pstep12"
+    checkpoint_epoch = 500
     checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
     prep_save_dir = f"../log/{checkpoint_dir_name}/preprocess/rope"
     colormap = rgb_colormap(repeat=100)  # only red

@@ -84,7 +84,7 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
     log_interval = 5
     n_future = 3
     dist_thresh_range = [0.02, 0.05]  # for preprocessing
-    adj_thresh_range = [0.2, 0.3]  # for constructing relations
+    adj_thresh_range = [1.5, 1.6]  # for constructing relations
     # datasets = {phase: MultistepRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
     #             fixed_idx=False, dist_thresh=0.05, n_future=n_future) for phase in phases}
     datasets = {phase: CanonicalRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, 
@@ -286,7 +286,7 @@ def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope',
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rope_can_debug_3"
+    out_dir = "../log/rope_can_debug_connected_pstep12"
     dense = True  # deprecated
     train_data_dirs = "../data/rope"
     ratios = {"train": [0, 0.9], "valid": [0.9, 1]}
