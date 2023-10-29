@@ -274,10 +274,10 @@ class CanonicalRopeDynDataset(Dataset):
 
                 # downsample to uniform radius
                 downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
-                # _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
-                # fps_idx_2 = fps_idx_2.astype(int)
-                # fps_idx = fps_idx_1[fps_idx_2]
-                fps_idx = fps_idx_1
+                _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
+                fps_idx_2 = fps_idx_2.astype(int)
+                fps_idx = fps_idx_1[fps_idx_2]
+                # fps_idx = fps_idx_1
                 # print(fps_idx_1.shape, fps_idx_1.max(), fps_idx_1.dtype, fps_idx_2.shape, fps_idx_2.max(), fps_idx_2.dtype)
                 self.fps_idx_list.append(fps_idx)
         obj_kp_start = [obj_kp_start[j][fps_idx] for j, fps_idx in enumerate(self.fps_idx_list)]
