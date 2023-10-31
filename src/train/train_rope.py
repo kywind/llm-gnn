@@ -17,6 +17,7 @@ from gnn.utils import set_seed, umeyama_algorithm
 from train.random_rope_dataset import RandomRopeDynDataset
 from train.multistep_rope_dataset import MultistepRopeDynDataset
 from train.canonical_rope_dataset import CanonicalRopeDynDataset, construct_edges_from_states
+from train.linear_rope_dataset import LinearRopeDynDataset, construct_edges_from_adjacency
 import open3d as o3d
 
 import cv2
@@ -51,14 +52,15 @@ def truncate_graph(data):
     data['Rs'] = data['Rs'][:, :max_n, :]
     return data
 
-def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2], max_nR=500):
+def construct_relations(states, state_mask, eef_mask, adj_thresh_range=[0.1, 0.2], max_nR=500, adjacency=None):
     # construct relations (density as hyperparameter)
     bsz = states.shape[0]  # states: B, n_his, N, 3
     adj_thresh = np.random.uniform(*adj_thresh_range, (bsz,))
     adj_thresh = torch.tensor(adj_thresh).to(states.device)
-    Rr, Rs = construct_edges_from_states(states[:, -1], adj_thresh, 
+    Rr, Rs = construct_edges_from_adjacency(states[:, -1], adj_thresh, 
                                         mask=state_mask, 
                                         eef_mask=eef_mask,
+                                        adjacency=adjacency,
                                         no_self_edge=True)
     assert Rr[:, -1].sum() > 0
     Rr = Rr.detach()
@@ -84,10 +86,12 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
     log_interval = 5
     n_future = 3
     dist_thresh_range = [0.02, 0.05]  # for preprocessing
-    adj_thresh_range = [1.5, 1.6]  # for constructing relations
+    adj_thresh_range = [0.15, 0.25]  # for constructing relations
     # datasets = {phase: MultistepRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, dense, 
     #             fixed_idx=False, dist_thresh=0.05, n_future=n_future) for phase in phases}
-    datasets = {phase: CanonicalRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, 
+    # datasets = {phase: CanonicalRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, 
+    #             fixed_idx=False, dist_thresh_range=dist_thresh_range, n_future=n_future) for phase in phases}
+    datasets = {phase: LinearRopeDynDataset(args, data_dirs, prep_save_dir, ratios, phase, 
                 fixed_idx=False, dist_thresh_range=dist_thresh_range, n_future=n_future) for phase in phases}
 
     dataloaders = {phase: DataLoader(
@@ -128,7 +132,8 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
 
                         data['Rr'], data['Rs'] = construct_relations(data['state'], 
                                                                     data['state_mask'], data['eef_mask'], 
-                                                                    adj_thresh_range=adj_thresh_range)
+                                                                    adj_thresh_range=adj_thresh_range,
+                                                                    adjacency=data['adjacency'])
 
                         pred_state, pred_motion = model(**data)
 
@@ -156,6 +161,7 @@ def train_rope(args, out_dir, data_dirs, dense=True, material='rope', ratios=Non
                                 "state_mask": data["state_mask"],  # (B, N+M,)
                                 "eef_mask": data["eef_mask"],  # (B, N+M,)
                                 "obj_mask": data["obj_mask"],  # (B, N,)
+                                "adjacency": data["adjacency"],  # (B, M',)
                             }
                             data = next_graph
 
@@ -286,9 +292,10 @@ def test_rope(args, out_dir, data_dirs, checkpoint, dense=True, material='rope',
 if __name__ == "__main__":
     args = gen_args()
 
-    out_dir = "../log/rope_can_debug_connected_pstep12"
+    # out_dir = "../log/rope_can_debug_connected_pstep12"
+    out_dir = "../log/rope_noabspos_can_linear_pstep12"
     dense = True  # deprecated
-    train_data_dirs = "../data/rope"
+    train_data_dirs = "../data/rope-new"
     ratios = {"train": [0, 0.9], "valid": [0.9, 1]}
     train_rope(args, out_dir, train_data_dirs, dense, ratios=ratios)
 

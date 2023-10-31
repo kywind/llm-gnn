@@ -18,7 +18,7 @@ import glob
 from PIL import Image
 import pickle as pkl
 from dgl.geometry import farthest_point_sampler
-from train.random_rope_dataset import construct_edges_from_states
+from train.linear_rope_dataset import construct_edges_from_adjacency
 from train.train_rope import truncate_graph
 from data.utils import label_colormap, rgb_colormap, fps_rad_idx
 from preprocess_rope import extract_pushes
@@ -29,12 +29,12 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
-    adj_thresh = 1.55  # constructing edges
-    top_k = 100  # first step downsampling
-    fps_radius = 0.1  # second step downsampling
+    adj_thresh = 0.35  # constructing edges
+    # top_k = 100  # first step downsampling
+    fps_radius = 0.2  # second step downsampling
     max_nR = 500
     max_neef = 1
-    max_nobj = top_k  # max number of allowd objects
+    max_nobj = 100  # max number of allowd objects
     max_n = 1
 
     # vis
@@ -118,17 +118,38 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
     # downsample particles to uniform radius
     fps_idx_list = []
     for j in range(len(obj_kp)):
+        ## old
         # farthest point sampling
-        particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
-        fps_idx_tensor = farthest_point_sampler(particle_tensor, top_k, start_idx=np.random.randint(0, obj_kp[j].shape[0]))[0]
-        fps_idx_1 = fps_idx_tensor.numpy().astype(np.int32)
-        # downsample to uniform radius
-        downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
-        _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
-        assert len(fps_idx_2) <= top_k, f"Not enough particles to downsample. fps_idx_2: {len(fps_idx_2)}, top_k: {top_k}"
-        fps_idx_2 = fps_idx_2.astype(int)
-        fps_idx = fps_idx_1[fps_idx_2]
-        fps_idx_list.append(fps_idx)
+        # particle_tensor = torch.from_numpy(obj_kp[j]).float()[None, ...]
+        # fps_idx_tensor = farthest_point_sampler(particle_tensor, top_k, start_idx=np.random.randint(0, obj_kp[j].shape[0]))[0]
+        # fps_idx_1 = fps_idx_tensor.numpy().astype(np.int32)
+        # # downsample to uniform radius
+        # downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
+        # _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
+        # assert len(fps_idx_2) <= top_k, f"Not enough particles to downsample. fps_idx_2: {len(fps_idx_2)}, top_k: {top_k}"
+        # fps_idx_2 = fps_idx_2.astype(int)
+        # fps_idx = fps_idx_1[fps_idx_2]
+        # fps_idx_list.append(fps_idx)
+
+        ## new sampling using canonical particles
+        can_pos = np.load(os.path.join(prep_save_dir, 'canonical_pos', f'{episode_idx}.npy'))  # (N,)
+        min_can = can_pos.min()
+        max_can = can_pos.max()
+        n_bins = int((max_can - min_can) / fps_radius + 0.5)
+        can_list = np.linspace(min_can, max_can, num=n_bins)
+
+        # find the closest particle to each canonical position
+        can_dist = can_pos[:, None] - can_list[None, :]  # (N, n_bins)
+        can_dist = np.abs(can_dist)
+        # print(fps_radius, can_dist.min(), can_dist.max(), can_list)
+        can_dist_mask = can_dist < fps_radius * 0.2  # (N, n_bins)
+        particles_bin = obj_kp[j][:, :, None] * can_dist_mask[:, None, :]  # (N, 3, n_bins)
+        particles_bin_mean = particles_bin.sum(0) / can_dist_mask.sum(0)[None, :]  # (3, n_bins)
+        particles_bin_distance = obj_kp[j][:, :, None] - particles_bin_mean[None, :, :]  # (N, 3, n_bins)
+        particles_bin_distance = np.linalg.norm(particles_bin_distance, axis=1)  # (N, n_bins)
+        particles_bin_idx = np.argmin(particles_bin_distance, axis=0)  # (n_bins,)
+        fps_idx_list.append(list(particles_bin_idx))
+
     obj_kp = [obj_kp[j][fps_idx] for j, fps_idx in enumerate(fps_idx_list)]
     instance_num = len(obj_kp)
     obj_kp = np.concatenate(obj_kp, axis=0) # (N, 3)
@@ -199,9 +220,10 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
 
     # construct relations (density as hyperparameter)
     states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
-    Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
+    Rr, Rs = construct_edges_from_adjacency(torch.tensor(states).unsqueeze(0), adj_thresh, 
                                         mask=torch.tensor(state_mask).unsqueeze(0), 
                                         eef_mask=torch.tensor(eef_mask).unsqueeze(0),
+                                        adjacency=None,  # TODO
                                         no_self_edge=True)
     Rr, Rs = Rr.squeeze(0).numpy(), Rs.squeeze(0).numpy()
 
@@ -446,9 +468,10 @@ def rollout_rope(args, data_dir, prep_save_dir, save_dir, checkpoint, episode_id
                 max_neef = eef_kp_num
 
             states = np.concatenate([obj_kp, eef_kp[0]], axis=0)  # (N, 3)  # the current eef_kp
-            Rr, Rs = construct_edges_from_states(torch.tensor(states).unsqueeze(0), adj_thresh, 
+            Rr, Rs = construct_edges_from_adjacency(torch.tensor(states).unsqueeze(0), adj_thresh, 
                                                 mask=torch.tensor(state_mask).unsqueeze(0), 
                                                 eef_mask=torch.tensor(eef_mask).unsqueeze(0),
+                                                adjacency=None,  # TODO
                                                 no_self_edge=True)
             Rr, Rs = Rr.squeeze(0).numpy(), Rs.squeeze(0).numpy()
 
@@ -639,11 +662,11 @@ if __name__ == "__main__":
     episode_idx = 0
     start_idx = 0
     rollout_steps = 100
-    data_dir = "../data/rope"
-    checkpoint_dir_name = "rope_can_debug_connected_pstep12"
-    checkpoint_epoch = 1000
+    data_dir = "../data/rope-new"
+    checkpoint_dir_name = "rope_noabspos_can_linear_pstep12"
+    checkpoint_epoch = 200
     checkpoint = f"../log/{checkpoint_dir_name}/checkpoints/model_{checkpoint_epoch}.pth"
-    prep_save_dir = f"../log/{checkpoint_dir_name}/preprocess/rope"
+    prep_save_dir = f"../log/{checkpoint_dir_name}/preprocess/rope-new"
     colormap = rgb_colormap(repeat=100)  # only red
     # colormap = label_colormap()
 

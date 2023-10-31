@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import pickle as pkl
 
 from data.utils import depth2fgpcd, np2o3d, fps_rad_idx
-from preprocess_rope_2 import extract_pushes
+from preprocess_rope_3 import extract_pushes
 from dgl.geometry import farthest_point_sampler
 
 
@@ -73,11 +73,66 @@ def construct_edges_from_states(states, adj_thresh, mask, eef_mask, no_self_edge
     return Rr, Rs
 
 
+def construct_edges_from_adjacency(states, adj_thresh, mask, eef_mask, adjacency, no_self_edge=False):
+    B, N, state_dim = states.shape
+    s_receiv = states[:, :, None, :].repeat(1, 1, N, 1)
+    s_sender = states[:, None, :, :].repeat(1, N, 1, 1)
+
+    # dis: B x particle_num x particle_num
+    # adj_matrix: B x particle_num x particle_num
+    threshold = adj_thresh * adj_thresh
+    dis = torch.sum((s_sender - s_receiv)**2, -1)
+    mask_1 = mask[:, :, None].repeat(1, 1, N)
+    mask_2 = mask[:, None, :].repeat(1, N, 1)
+    mask = mask_1 * mask_2
+    dis[~mask] = 1e10  # avoid invalid particles to particles relations
+    eef_mask_1 = eef_mask[:, :, None].repeat(1, 1, N)
+    eef_mask_2 = eef_mask[:, None, :].repeat(1, N, 1)
+    eef_mask = eef_mask_1 * eef_mask_2
+    dis[eef_mask] = 1e10  # avoid eef to eef relations
+    if isinstance(threshold, float):
+        adj_matrix = ((dis - threshold) < 0).float()
+    else:
+        adj_matrix = ((dis - threshold[:, None, None]) < 0).float()
+
+    # remove self edge
+    if no_self_edge:
+        self_edge_mask = torch.eye(N, device=states.device, dtype=states.dtype)[None, :, :]
+        adj_matrix = adj_matrix * (1 - self_edge_mask)
+
+    # add topk constraints
+    topk = 5
+    topk_idx = torch.topk(dis, k=topk, dim=-1, largest=False)[1]
+    topk_matrix = torch.zeros_like(adj_matrix)
+    topk_matrix.scatter_(-1, topk_idx, 1)
+    adj_matrix = adj_matrix * topk_matrix
+
+    # TODO currently we overwrite adj_matrix with hard-code adjacency
+    max_nobj = 100
+    adj_matrix[:, :max_nobj, :max_nobj] = 0
+    adj_matrix[:, 1:max_nobj, 0:max_nobj-1] = \
+        torch.eye(max_nobj-1, device=adj_matrix.device, dtype=adj_matrix.dtype)[None, :, :]
+    adj_matrix[~mask] = 0
+    
+    n_rels = adj_matrix.sum(dim=(1,2))
+    n_rel = n_rels.max().long().item()
+    rels_idx = []
+    rels_idx = [torch.arange(n_rels[i]) for i in range(B)]
+    rels_idx = torch.hstack(rels_idx).to(device=states.device, dtype=torch.long)
+    rels = adj_matrix.nonzero()
+    Rr = torch.zeros((B, n_rel, N), device=states.device, dtype=states.dtype)
+    Rs = torch.zeros((B, n_rel, N), device=states.device, dtype=states.dtype)
+    Rr[rels[:, 0], rels_idx, rels[:, 1]] = 1
+    Rs[rels[:, 0], rels_idx, rels[:, 2]] = 1
+    return Rr, Rs
+    
+
+
 '''
 Do particle sampling based on raw obj keypoints and eef keypoints data
 Shoe pushing dataset 
 '''
-class CanonicalRopeDynDataset(Dataset):
+class LinearRopeDynDataset(Dataset):
     def __init__(self, 
         args,
         data_dir,
@@ -102,8 +157,8 @@ class CanonicalRopeDynDataset(Dataset):
         self.max_n = 1  # max number of objects
         self.max_nobj = 100  # max number of object points
         self.max_neef = 1  # max number of eef points
-        self.fps_radius_range = [0.08, 0.12]  # radius for farthest point sampling
-        self.top_k = 100  # maximal top k particles to consider for first step fps
+        self.fps_radius_range = [0.18, 0.22]  # radius for farthest point sampling
+        # self.top_k = 100  # maximal top k particles to consider for first step fps
 
         self.obj_kypts_paths = []
         self.eef_kypts_paths = []
@@ -166,6 +221,10 @@ class CanonicalRopeDynDataset(Dataset):
             curr_pair_len = len(self.pair_lists)
         self.pair_lists = np.array(self.pair_lists)
         print(f'Found {len(self.pair_lists)} frame pairs in {pairs_path}')
+
+        # load canonical positions
+        can_path = [os.path.join(save_dir, 'canonical_pos', f'{episode_idx}.npy') for episode_idx in range(num_episodes)]
+        self.canonical_pos = can_path
 
         # load physics params
         self.physics_params = []
@@ -264,21 +323,57 @@ class CanonicalRopeDynDataset(Dataset):
         # TODO replace this sampling to a random version
         if not self.fixed_idx or (self.fixed_idx and self.fps_idx_list == []):
             self.fps_idx_list = []
+            ## old sampling
+            # for j in range(len(obj_kp_start)):
+            #     # farthest point sampling
+            #     particle_tensor = torch.from_numpy(obj_kp_start[j]).float()[None, ...]
+            #     fps_idx_tensor = farthest_point_sampler(particle_tensor, self.top_k, start_idx=np.random.randint(0, obj_kp_start[j].shape[0]))[0]
+            #     fps_idx_1 = fps_idx_tensor.numpy().astype(np.int32)
+            #     # downsample to uniform radius
+            #     downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
+            #     fps_radius = np.random.uniform(fps_radius_range[0], fps_radius_range[1])
+            #     _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
+            #     fps_idx_2 = fps_idx_2.astype(int)
+            #     fps_idx = fps_idx_1[fps_idx_2]
+            #     # fps_idx = fps_idx_1
+            #     # print(fps_idx_1.shape, fps_idx_1.max(), fps_idx_1.dtype, fps_idx_2.shape, fps_idx_2.max(), fps_idx_2.dtype)
+            #     self.fps_idx_list.append(fps_idx)
+            
+            ## new sampling using canonical particles
+            can_pos = np.load(self.canonical_pos[episode_idx])  # (N,)
+            min_can = can_pos.min()
+            max_can = can_pos.max()
+            fps_radius = np.random.uniform(fps_radius_range[0], fps_radius_range[1])
+            n_bins = int((max_can - min_can) / fps_radius + 0.5)
+            can_list = np.linspace(min_can, max_can, num=n_bins)
             for j in range(len(obj_kp_start)):
-                # farthest point sampling
-                particle_tensor = torch.from_numpy(obj_kp_start[j]).float()[None, ...]
-                fps_idx_tensor = farthest_point_sampler(particle_tensor, self.top_k, start_idx=np.random.randint(0, obj_kp_start[j].shape[0]))[0]
-                fps_idx_1 = fps_idx_tensor.numpy().astype(np.int32)
+                assert j == 0, 'only support single object'
+                # find the closest particle to each canonical position
+                can_dist = can_pos[:, None] - can_list[None, :]  # (N, n_bins)
+                can_dist = np.abs(can_dist)
+                # print(fps_radius, can_dist.min(), can_dist.max(), can_list)
+                can_dist_mask = can_dist < fps_radius * 0.2  # (N, n_bins)
+                particles_bin = obj_kp_start[j][:, :, None] * can_dist_mask[:, None, :]  # (N, 3, n_bins)
+                particles_bin_mean = particles_bin.sum(0) / can_dist_mask.sum(0)[None, :]  # (3, n_bins)
+                particles_bin_distance = obj_kp_start[j][:, :, None] - particles_bin_mean[None, :, :]  # (N, 3, n_bins)
+                particles_bin_distance = np.linalg.norm(particles_bin_distance, axis=1)  # (N, n_bins)
+                particles_bin_idx = np.argmin(particles_bin_distance, axis=0)  # (n_bins,)
+                self.fps_idx_list.append(list(particles_bin_idx))
 
-                # downsample to uniform radius
-                downsample_particle = particle_tensor[0, fps_idx_1, :].numpy()
-                fps_radius = np.random.uniform(fps_radius_range[0], fps_radius_range[1])
-                _, fps_idx_2 = fps_rad_idx(downsample_particle, fps_radius)
-                fps_idx_2 = fps_idx_2.astype(int)
-                fps_idx = fps_idx_1[fps_idx_2]
-                # fps_idx = fps_idx_1
-                # print(fps_idx_1.shape, fps_idx_1.max(), fps_idx_1.dtype, fps_idx_2.shape, fps_idx_2.max(), fps_idx_2.dtype)
-                self.fps_idx_list.append(fps_idx)
+        # get adjacency
+        adjacency = np.zeros((len(self.fps_idx_list[0]) - 1, 2), dtype=int)
+        adjacency[:, 0] = np.arange(len(self.fps_idx_list[0]) - 1)
+        adjacency[:, 1] = np.arange(1, len(self.fps_idx_list[0]))
+
+        if max_nobj is not None:
+            # pad adjacency
+            adjacency_pad = np.zeros((max_nobj, 2), dtype=int)
+            adjacency_pad[:adjacency.shape[0]] = adjacency
+            adjacency = adjacency_pad
+        else:
+            raise NotImplementedError
+
+        # downsample
         obj_kp_start = [obj_kp_start[j][fps_idx] for j, fps_idx in enumerate(self.fps_idx_list)]
         instance_num = len(obj_kp_start)
         assert instance_num == 1
@@ -461,6 +556,7 @@ class CanonicalRopeDynDataset(Dataset):
             # relation information
             # "Rr": Rr,  # (n_rel, N+M)
             # "Rs": Rs,  # (n_rel, N+M)
+            "adjacency": adjacency,  # (M', 2)
 
             # attr information
             "attrs": attrs,  # (N+M, attr_dim)
